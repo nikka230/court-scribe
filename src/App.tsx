@@ -82,7 +82,8 @@ export function App() {
 
   // Typing session live state
   const [currentLineIdx, setCurrentLineIdx] = useState(0);
-  const [charIndex, setCharIndex] = useState(0);
+  const [typedChars, setTypedChars] = useState<string[]>([]);
+  const charIndex = typedChars.length;
   const [startedAt, setStartedAt] = useState<number | null>(null);
   const [elapsedSec, setElapsedSec] = useState(0);
   const [correctChars, setCorrectChars] = useState(0);
@@ -174,7 +175,7 @@ export function App() {
         setDossier(normalizeDossier(nextDossier));
       }
       setCurrentLineIdx(0);
-      setCharIndex(0);
+      setTypedChars([]);
       setStartedAt(null);
       setElapsedSec(0);
       setCorrectChars(0);
@@ -358,6 +359,21 @@ export function App() {
         return;
       }
 
+      if (e.key === 'Backspace') {
+        e.preventDefault();
+        if (typedChars.length > 0) {
+          setTypedChars((prev) => prev.slice(0, -1));
+          setLastPressedCode('Backspace');
+          setLastHitState('idle');
+          setTimeout(
+            () => setLastPressedCode((prev) => (prev === 'Backspace' ? null : prev)),
+            140
+          );
+          audioEngine.playKeyHit(0, settings.soundProfile, settings.volume * 0.65);
+        }
+        return;
+      }
+
       if (e.code === 'Space') {
         e.preventDefault();
       }
@@ -384,22 +400,28 @@ export function App() {
       setLastPressedCode(e.code);
       setTimeout(() => setLastPressedCode((prev) => (prev === e.code ? null : prev)), 150);
 
-      // Update keystroke stats
+      // Update keystroke stats & overwrite-on-typo progression
       const stat = sessionKeyStatsRef.current[expected] || { hits: 0, misses: 0 };
+      const isCorrect = typedChar === expected;
 
-      if (typedChar === expected) {
+      const nextTyped = [...typedChars, typedChar];
+      const nextIdx = nextTyped.length;
+      const nextAttempts = totalAttempts + 1;
+      const nextCorrect = isCorrect ? correctChars + 1 : correctChars;
+      const nextErrors = isCorrect ? errorCount : errorCount + 1;
+      const nextCombo = isCorrect ? combo + 1 : 0;
+      const nextMaxCombo = Math.max(maxCombo, nextCombo);
+
+      setTotalAttempts(nextAttempts);
+      setCorrectChars(nextCorrect);
+      setErrorCount(nextErrors);
+      setCombo(nextCombo);
+      setMaxCombo(nextMaxCombo);
+
+      if (isCorrect) {
         stat.hits += 1;
         sessionKeyStatsRef.current[expected] = stat;
 
-        const nextCorrect = correctChars + 1;
-        const nextAttempts = totalAttempts + 1;
-        const nextCombo = combo + 1;
-        const nextMaxCombo = Math.max(maxCombo, nextCombo);
-
-        setCorrectChars(nextCorrect);
-        setTotalAttempts(nextAttempts);
-        setCombo(nextCombo);
-        setMaxCombo(nextMaxCombo);
         setLastHitState('hit');
         setErrorFlash(false);
         setWrongLayoutWarning(false);
@@ -417,32 +439,10 @@ export function App() {
             'gold'
           );
         }
-
-        const nextIdx = charIndex + 1;
-        if (nextIdx >= currentChars.length) {
-          // Completed this line!
-          audioEngine.playLineBell(settings.soundProfile, settings.volume);
-          canvasRef.current?.burst('#68E0A8', 18);
-          setPeekActive(false);
-
-          if (currentLineIdx + 1 >= dossier.lines.length) {
-            setCharIndex(nextIdx);
-            finalizeSession(nextCorrect, nextAttempts, errorCount, nextMaxCombo);
-          } else {
-            setCurrentLineIdx((i) => i + 1);
-            setCharIndex(0);
-          }
-        } else {
-          setCharIndex(nextIdx);
-        }
       } else {
-        // Typo!
         stat.misses += 1;
         sessionKeyStatsRef.current[expected] = stat;
 
-        setTotalAttempts((a) => a + 1);
-        setErrorCount((err) => err + 1);
-        setCombo(0);
         setLastHitState('miss');
         setErrorFlash(true);
         setTimeout(() => setErrorFlash(false), 260);
@@ -475,6 +475,24 @@ export function App() {
           });
         }
       }
+
+      // Advance cursor (mistyped character overwrites target slot in red; user can Backspace to fix or keep typing)
+      if (nextIdx >= currentChars.length) {
+        audioEngine.playLineBell(settings.soundProfile, settings.volume);
+        const linePerfect = nextTyped.every((ch, i) => ch === currentChars[i]);
+        canvasRef.current?.burst(linePerfect ? '#68E0A8' : '#F2D583', 18);
+        setPeekActive(false);
+
+        if (currentLineIdx + 1 >= dossier.lines.length) {
+          setTypedChars(nextTyped);
+          finalizeSession(nextCorrect, nextAttempts, nextErrors, nextMaxCombo);
+        } else {
+          setCurrentLineIdx((i) => i + 1);
+          setTypedChars([]);
+        }
+      } else {
+        setTypedChars(nextTyped);
+      }
     };
 
     const onKeyUp = (e: KeyboardEvent) => {
@@ -492,6 +510,7 @@ export function App() {
     dossier,
     currentLine,
     currentChars,
+    typedChars,
     charIndex,
     currentLineIdx,
     startedAt,
@@ -796,6 +815,7 @@ export function App() {
             dossier={dossier}
             currentLineIdx={currentLineIdx}
             charIndex={charIndex}
+            typedChars={typedChars}
             errorFlash={errorFlash}
             wrongLayoutWarning={wrongLayoutWarning}
             autoLayoutEnabled={settings.autoLayoutMapping}
@@ -824,7 +844,7 @@ export function App() {
             <div className="flex flex-wrap items-center gap-2">
               <span className="inline-flex items-center gap-1.5 rounded-full border border-[#d4af37]/30 bg-black/45 px-3 py-1">
                 <span className="h-2 w-2 rounded-full bg-[#2ea673] shadow-[0_0_8px_#2ea673]" />
-                <span>พร้อมพิมพ์ได้ทันทีจากคีย์บอร์ด</span>
+                <span>พร้อมพิมพ์ทันที · กด Backspace ลบแก้คำผิดได้</span>
               </span>
 
               <button

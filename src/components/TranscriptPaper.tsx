@@ -21,6 +21,7 @@ import type {
 import {
   FINGER_META,
   THAI_COMBINING_NAMES,
+  isThaiCombiningMark,
   lookupKeyForChar,
 } from '../data/keyboardLayouts';
 import { segmentLineIntoClusters } from '../engine/typingEngine';
@@ -34,7 +35,8 @@ import sealImg from '../assets/court-seal.jpg';
 interface Props {
   dossier: CaseDossier;
   currentLineIdx: number;
-  charIndex: number; // typed code-unit / code-point index within currentLine.text
+  charIndex: number; // typed code-point index within currentLine.text
+  typedChars: string[];
   errorFlash: boolean;
   wrongLayoutWarning: boolean;
   autoLayoutEnabled: boolean;
@@ -55,6 +57,7 @@ export function TranscriptPaper({
   dossier,
   currentLineIdx,
   charIndex,
+  typedChars,
   errorFlash,
   wrongLayoutWarning,
   autoLayoutEnabled,
@@ -278,27 +281,79 @@ export function TranscriptPaper({
                 const isPartial = isActive && charIndex > c.cpStart;
 
                 if (isDone) {
+                  const typedSlice = typedChars.slice(c.cpStart, c.cpEnd);
+                  const isClusterCorrect =
+                    typedSlice.length === c.chars.length &&
+                    typedSlice.every((ch, i) => ch === c.chars[i]);
+
+                  if (isClusterCorrect) {
+                    return (
+                      <span
+                        key={c.cpStart}
+                        className="text-[#164f36] transition-colors duration-75"
+                      >
+                        {c.cluster}
+                      </span>
+                    );
+                  }
+
+                  const rawTyped = typedSlice.join('');
+                  const isMistypedSpace = rawTyped === ' ';
+                  const displayWrong = isMistypedSpace
+                    ? '\u00A0'
+                    : isThaiCombiningMark(typedSlice[0] || '')
+                    ? `◌${rawTyped}`
+                    : rawTyped;
+
                   return (
                     <span
                       key={c.cpStart}
-                      className="text-[#164f36] transition-colors duration-75"
+                      title={`พิมพ์ "${isMistypedSpace ? 'Space' : rawTyped}" (ที่ถูกต้องคือ "${
+                        c.cluster === ' ' ? 'Space' : c.cluster
+                      }")`}
+                      className={`inline-block rounded-sm font-semibold text-[#c91c1c] underline decoration-[#d94141] decoration-2 underline-offset-4 transition-colors duration-75 ${
+                        isMistypedSpace
+                          ? 'mx-0.5 min-w-[0.65em] bg-[#d94141]/30'
+                          : 'bg-[#d94141]/14 px-[1px]'
+                      }`}
                     >
-                      {c.cluster}
+                      {displayWrong}
                     </span>
                   );
                 }
 
                 if (isActive) {
+                  if (isPartial) {
+                    const typedPrefix = typedChars.slice(c.cpStart, charIndex);
+                    const prefixHasError = typedPrefix.some((ch, i) => ch !== c.chars[i]);
+                    const remainingExpected = c.chars.slice(charIndex - c.cpStart);
+                    const combined = [...typedPrefix, ...remainingExpected].join('');
+                    const displayPartial = isThaiCombiningMark(typedPrefix[0] || '')
+                      ? `◌${combined}`
+                      : combined;
+
+                    return (
+                      <span
+                        key={c.cpStart}
+                        className={`relative inline-block rounded px-0.5 transition-all duration-75 ${
+                          prefixHasError
+                            ? 'bg-[#d94141]/25 text-[#a81515] ring-2 ring-[#d94141]'
+                            : 'bg-[#e39d2b] text-[#1a1106] ring-2 ring-[#b8710b]'
+                        }`}
+                      >
+                        {displayPartial}
+                        <span
+                          aria-hidden="true"
+                          className="animate-caret absolute right-0 -bottom-0.5 left-0 h-[3px] rounded-full bg-[#7c1d1d]"
+                        />
+                      </span>
+                    );
+                  }
+
                   return (
                     <span
                       key={c.cpStart}
-                      className={`relative inline-block rounded px-0.5 transition-all duration-75 ${
-                        errorFlash
-                          ? 'bg-[#d94141] text-white shadow-[0_0_12px_rgba(217,65,65,0.65)]'
-                          : isPartial
-                          ? 'bg-[#e39d2b] text-[#1a1106] ring-2 ring-[#b8710b]'
-                          : 'bg-[#d4af37] text-[#140e07] shadow-[0_2px_10px_rgba(184,134,11,0.45)]'
-                      }`}
+                      className="relative inline-block rounded bg-[#d4af37] px-0.5 text-[#140e07] shadow-[0_2px_10px_rgba(184,134,11,0.45)] transition-all duration-75"
                     >
                       {c.cluster === ' ' ? '\u00A0' : c.cluster}
                       <span
