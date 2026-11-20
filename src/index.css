@@ -1,0 +1,281 @@
+@import "tailwindcss";
+
+:root {
+  --bg-obsidian: #0f0b08;
+  --bg-walnut: #16110d;
+  --bg-mahogany: #221812;
+  --bg-mahogany-elevated: #2b1e16;
+  --brass-bright: #f2d583;
+  --brass-gold: #d4af37;
+  --brass-antique: #9d7a2c;
+  --brass-deep: #6b501a;
+  --crimson-seal: #a82828;
+  --crimson-bright: #d94141;
+  --jade-ink: #2ea673;
+  --cobalt-ink: #3d75b5;
+  --parchment-light: #f6efe0;
+  --parchment-mid: #ece0c7;
+  --parchment-edge: #d8c6a3;
+  --ink-dark: #1d1610;
+  --ink-muted: #5a4b3a;
+  --text-ivory: #f5efe6;
+  --text-warm-muted: #b8a68e;
+}
+
+@layer base {
+  html,
+  body {
+    font-family: 'IBM Plex Sans Thai', 'Sarabun', system-ui, -apple-system, sans-serif;
+    background-color: var(--bg-obsidian);
+    color: var(--text-ivory);
+    overflow-x: hidden;
+  }
+}
+
+.font-display {
+  font-family: 'Cinzel', 'Cormorant Garamond', Georgia, serif;
+}
+
+.font-editorial {
+  font-family: 'Cormorant Garamond', 'Sarabun', Georgia, serif;
+}
+
+.font-transcript-en {
+  font-family: 'JetBrains Mono', 'Cormorant Garamond', monospace;
+}
+
+.font-transcript-th {
+  font-family: 'Sarabun', 'IBM Plex Sans Thai', sans-serif;
+}
+
+.font-mono-num {
+  font-family: 'JetBrains Mono', monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Ornate Brass Panel Surface */
+.brass-panel {
+  background: linear-gradient(180deg, rgba(35, 25, 19, 0.92) 0%, rgba(21, 15, 11, 0.96) 100%);
+  border: 1px solid rgba(212, 175, 55, 0.28);
+  box-shadow:
+    0 12px 40px rgba(0, 0, 0, 0.65),
+    inset 0 1px 0 rgba(242, 213, 131, 0.16),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.5);
+}
+
+.brass-panel-glass {
+  background: linear-gradient(180deg, rgba(28, 20, 15, 0.82) 0%, rgba(18, 13, 10, 0.9) 100%);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(212, 175, 55, 0.24);
+  box-shadow:
+    0 10px 30px rgba(0, 0, 0, 0.55),
+    inset 0 1px 0 rgba(242, 213, 131, 0.14);
+}
+
+/* Authentic Legal Courtroom Transcript Parchment Sheet */
+.parchment-sheet {
+  background:
+    radial-gradient(ellipse at 50% 0%, rgba(255, 250, 236, 0.95) 0%, rgba(244, 234, 213, 0.96) 55%, rgba(232, 218, 189, 0.98) 100%);
+  color: var(--ink-dark);
+  border: 1px solid #c9b283;
+  box-shadow:
+    0 20px 55px rgba(0, 0, 0, 0.7),
+    0 0 0 1px rgba(212, 175, 55, 0.35),
+    inset 0 0 40px rgba(154, 116, 44, 0.14),
+    inset 0 1px 0 rgba(255, 255, 255, 0.8);
+  position: relative;
+}
+
+.parchment-sheet::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.32;
+  background-image:
+    repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 35px,
+      rgba(138, 110, 68, 0.16) 35px,
+      rgba(138, 110, 68, 0.16) 36px
+    );
+}
+
+/* Double red legal margin rule like real court transcripts */
+.legal-margin-rule {
+  position: relative;
+}
+.legal-margin-rule::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 44px;
+  width: 3px;
+  border-left: 1px solid rgba(184, 50, 50, 0.38);
+  border-right: 1px solid rgba(184, 50, 50, 0.22);
+  pointer-events: none;
+}
+
+/* Banker's Lamp Golden Spotlight Cone */
+.lamp-spotlight {
+  background: radial-gradient(
+    ellipse 70% 55% at 50% -5%,
+    rgba(244, 200, 96, 0.22) 0%,
+    rgba(212, 175, 55, 0.08) 42%,
+    transparent 74%
+  );
+}
+
+/* 3D Sculpted Mechanical Keycaps */
+.keycap {
+  background: linear-gradient(180deg, #2f251e 0%, #211914 78%, #18120e 100%);
+  border: 1px solid rgba(212, 175, 55, 0.2);
+  border-bottom: 3px solid #0e0a07;
+  box-shadow:
+    0 3px 6px rgba(0, 0, 0, 0.5),
+    inset 0 1px 0 rgba(255, 236, 188, 0.12);
+  transition: transform 65ms ease, box-shadow 65ms ease, border-color 110ms ease, background 110ms ease;
+}
+
+.keycap-active {
+  background: linear-gradient(180deg, #f2d583 0%, #d4af37 65%, #a88321 100%) !important;
+  color: #16100a !important;
+  border-color: #fff2c2 !important;
+  border-bottom: 3px solid #6e5211 !important;
+  box-shadow:
+    0 0 18px rgba(212, 175, 55, 0.72),
+    0 3px 10px rgba(0, 0, 0, 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.65) !important;
+  transform: translateY(-1px);
+}
+
+.keycap-shift-needed {
+  background: linear-gradient(180deg, #b83b3b 0%, #8c2323 70%, #631616 100%) !important;
+  color: #fff5f5 !important;
+  border-color: #ff9c9c !important;
+  border-bottom: 3px solid #420c0c !important;
+  box-shadow: 0 0 16px rgba(217, 65, 65, 0.65) !important;
+}
+
+.keycap-pressed-hit {
+  transform: translateY(2px) !important;
+  border-bottom-width: 1px !important;
+  background: linear-gradient(180deg, #36b57e 0%, #228258 100%) !important;
+  color: #ffffff !important;
+  box-shadow: 0 0 16px rgba(46, 166, 115, 0.7) !important;
+}
+
+.keycap-pressed-miss {
+  transform: translateY(2px) !important;
+  border-bottom-width: 1px !important;
+  background: linear-gradient(180deg, #d94141 0%, #992222 100%) !important;
+  color: #ffffff !important;
+  box-shadow: 0 0 16px rgba(217, 65, 65, 0.75) !important;
+}
+
+/* Animations */
+@keyframes caretPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+.animate-caret {
+  animation: caretPulse 0.9s ease-in-out infinite;
+}
+
+@keyframes gavelShake {
+  0%, 100% { transform: translate3d(0, 0, 0); }
+  15% { transform: translate3d(-4px, 3px, 0); }
+  30% { transform: translate3d(4px, -3px, 0); }
+  45% { transform: translate3d(-3px, -2px, 0); }
+  65% { transform: translate3d(2px, 2px, 0); }
+}
+
+.animate-gavel-shake {
+  animation: gavelShake 0.32s cubic-bezier(0.36, 0.07, 0.19, 0.97);
+}
+
+@keyframes shoutSlam {
+  0% {
+    opacity: 0;
+    transform: scale(1.65) rotate(-4deg);
+    filter: blur(4px);
+  }
+  20% {
+    opacity: 1;
+    transform: scale(0.96) rotate(-2deg);
+    filter: blur(0);
+  }
+  30% {
+    transform: scale(1.02) rotate(-2deg);
+  }
+  80% {
+    opacity: 1;
+    transform: scale(1) rotate(-2deg);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(0.94) translateY(-14px) rotate(-2deg);
+  }
+}
+
+.animate-shout-slam {
+  animation: shoutSlam 1.45s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+@keyframes waxStamp {
+  0% {
+    opacity: 0;
+    transform: scale(2.4) rotate(-18deg);
+  }
+  65% {
+    opacity: 1;
+    transform: scale(0.93) rotate(-6deg);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) rotate(-6deg);
+  }
+}
+
+.animate-wax-stamp {
+  animation: waxStamp 0.55s cubic-bezier(0.18, 0.89, 0.32, 1.28) forwards;
+}
+
+@keyframes subtleFloat {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-4px); }
+}
+
+.animate-subtle-float {
+  animation: subtleFloat 4.2s ease-in-out infinite;
+}
+
+/* Custom Brass Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #140f0b;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(212, 175, 55, 0.32);
+  border-radius: 999px;
+  border: 2px solid #140f0b;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(212, 175, 55, 0.56);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-gavel-shake,
+  .animate-shout-slam,
+  .animate-wax-stamp,
+  .animate-subtle-float,
+  .animate-caret {
+    animation: none !important;
+  }
+}

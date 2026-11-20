@@ -1,0 +1,6 @@
+node_modules/
+dist/
+dist-portable/
+*.local
+.DS_Store
+*.log

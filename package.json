@@ -1,0 +1,29 @@
+{
+  "name": "court-scribe",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Court Scribe — Noir-Victorian Courtroom Stenographer Touch-Typing & English Reading/Translation Game",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "build:portable": "vite build --config vite.portable.config.ts",
+    "build:all": "tsc -b && vite build && vite build --config vite.portable.config.ts",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@phosphor-icons/react": "^2.1.7",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.0.9",
+    "@types/react": "^19.0.10",
+    "@types/react-dom": "^19.0.4",
+    "@vitejs/plugin-react": "^4.3.4",
+    "tailwindcss": "^4.0.9",
+    "typescript": "^5.7.3",
+    "vite": "^6.2.0",
+    "vite-plugin-singlefile": "^2.2.0"
+  }
+}
