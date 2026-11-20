@@ -1,35 +1,39 @@
 # COURT SCRIBE — บันทึกบัลลังก์
 
-เกมฝึกพิมพ์สัมผัสภาษาไทย (แป้นเกษมณี) และภาษาอังกฤษพร้อมฝึกอ่าน–ฝึกแปล ในบรรยากาศผู้ช่วยเสมียนจดบันทึกประจำศาล (Noir-Victorian Courtroom)
+> **Play Online Now (เล่นฟรีบนเว็บทันที):** https://nikka230.github.io/court-scribe/
 
-ทำงานบนเบราว์เซอร์ 100% **ไม่ต้องรันเซิร์ฟเวอร์ด้านหลัง** สามารถส่งให้เพื่อนเล่นได้ทันที!
+A **Noir-Victorian Courtroom Stenographer** touch-typing game for practicing **Thai (Kedmanee)** and **English (QWERTY + Reading & Thai Translation)** — 100% client-side static web app with zero backend required.
 
-## วิธีเล่นและส่งให้เพื่อน (2 วิธีง่ายที่สุด)
+เกมฝึกพิมพ์สัมผัส **ภาษาไทย (แป้นเกษมณี)** และ **ภาษาอังกฤษพร้อมฝึกอ่าน–ฝึกแปลไทย** ในบรรยากาศผู้ช่วยเสมียนจดบันทึกประจำศาล ทำงานบนเบราว์เซอร์ 100% ไม่ต้องมีเซิร์ฟเวอร์
 
-### วิธีที่ 1: ส่งไฟล์เดียวจบ! (Double-click เล่นได้เลย)
-- ไฟล์พร้อมเล่นอยู่ที่: `A:\ทำเกมเอง\CourtScribe-PlayNow.html` (~1.8 MB)
-- ส่งไฟล์นี้ผ่าน LINE / Discord / Google Drive ให้เพื่อนได้เลย แค่ดับเบิลคลิกเปิดใน Chrome / Edge / Safari ก็เล่นได้ทันที พร้อมภาพประกอบความละเอียดสูงและเสียงเครื่องพิมพ์ดีดครบชุด
+---
 
-### วิธีที่ 2: แชร์เป็นลิงก์เว็บไซต์ฟรี (ไม่ต้องมีเซิร์ฟเวอร์)
-- ลากโฟลเดอร์ `A:\ทำเกมเอง\court-scribe\dist` ไปวางที่ [Netlify Drop](https://app.netlify.com/drop) หรืออัปโหลดขึ้น GitHub Pages / Cloudflare Pages / Vercel
-- จะได้ลิงก์ `https://...` ส่งให้เพื่อนกดเล่นได้จากทุกอุปกรณ์
+## Highlights / ฟีเจอร์เด่น
 
-## ฟีเจอร์หลัก
-- **พิมพ์สัมผัสภาษาไทย (เกษมณี) & อังกฤษ (QWERTY)** พร้อมแป้นพิมพ์จำลอง 3 มิติ ไฮไลต์ปุ่มถัดไป + ปุ่ม Shift ซ้าย/ขวา + แผนภาพนิ้วทั้ง 10 นิ้ว
-- **Auto-Layout Mode** เปิดแล้วพิมพ์ได้ทันทีโดยไม่ต้องสลับภาษาใน Windows + ระบบตรวจจับเมื่อลืมสลับภาษา
-- **โหมดฝึกอ่าน–ฝึกแปลภาษาอังกฤษ (EN → TH)**: แปลประโยคอัตโนมัติ (เปิดตลอด / ซ่อนไว้กด Tab แอบดู / ปิดเพื่อทดสอบ), คลิกเจาะคำศัพท์ดู IPA + คำแปลไทย + ฟังเสียงอ่าน, สมุดคำศัพท์ส่วนตัวพร้อมแฟลชการ์ดทบทวน, และแบบทดสอบแปลศัพท์ท้ายสำนวน
-- **แหล่งข้อความหลากหลาย**:
-  - คดีศาลจำลอง (ไทย & อังกฤษ) พร้อมตัวละครผู้พิพากษา อัยการ ทนาย และพยาน
-  - **YouTube คำบรรยาย**: วางลิงก์ YouTube แสดงจอวิดีโอซิงก์เวลา รองรับดึงซับอัตโนมัติ / วาง Transcript จาก YouTube / อัปโหลด `.SRT` & `.VTT`
-  - **Wikipedia สด**: วางลิงก์หรือค้นหาบทความภาษาไทย/อังกฤษดึงตรงจาก Wikimedia API
-  - **ระบบสุ่มอัจฉริยะ**: สุ่มสดจาก Wikipedia (TH/EN) หรือคลังความรู้ออฟไลน์
-  - **วางข้อความเอง / อัปโหลดไฟล์** `.TXT`, `.SRT`, `.VTT`
-- **เสียงเครื่องพิมพ์ดีด & ค้อนผู้พิพากษาสังเคราะห์สด** (Web Audio API — ไม่ต้องโหลดไฟล์เสียงเพิ่ม)
+- **Thai Kedmanee & English QWERTY 3D Keyboard Guide:** Real-time next-key glow, Left/Right Shift ergonomics, 10-finger hand silhouette guide, grapheme-safe Thai combining mark rendering (`Intl.Segmenter`), wrong-layout detector, and **Auto-Layout Mode** (type Thai/English without switching OS IME).
+- **English Reading & Translation Practice (EN → TH):**
+  - Inline Thai sentence translations with 3 modes: **Visible**, **Peek on `Tab` / Hover**, and **Blind Challenge**
+  - **Click any word** for IPA phonetics, Thai translation, English definition, and audio pronunciation (Web Speech API)
+  - Personal **Vocabulary Ledger** with interactive **Flip Flashcard Review** + post-session comprehension quiz
+- **Zero-Backend Content Sources:**
+  - Built-in dramatic **Courtroom Case Dossiers** (TH & EN) + touch-typing finger drills
+  - **YouTube Transcript Mode:** Embeds live witness video monitor with timestamp sync (supports auto caption lookup, 1-click YouTube transcript paste, and `.SRT` / `.VTT` upload)
+  - **Live Wikipedia (TH / EN):** Paste any Wikipedia URL or search live directly via Wikimedia CORS API
+  - **Smart Randomizer:** Live random Wikipedia articles + curated offline knowledge library
+  - **Custom Text / File Import:** Paste any text or upload `.TXT`, `.SRT`, `.VTT`
+- **Procedural Courtroom Audio (Web Audio API):** Synthesized vintage brass typewriter strikes, mechanical thock switch, carriage return bell, wooden gavel strikes, and wax-seal verdict stamp.
 
-## คำสั่งสำหรับนักพัฒนา (แก้ไขและ Build ใหม่)
+---
+
+## Run Locally / รันและพัฒนาต่อในเครื่อง
+
 ```bash
-npm run dev            # รันโหมดพัฒนา
-npm run build          # สร้างโฟลเดอร์เว็บสถิต dist/
-npm run build:portable # สร้างไฟล์เดี่ยวพร้อมส่ง dist-portable/index.html
-npm run build:all      # ตรวจ TypeScript + สร้างทั้งสองแบบ
+npm install
+npm run dev            # Development server
+npm run build          # Static web build (dist/)
+npm run build:portable # Self-contained single-file HTML (dist-portable/index.html)
 ```
+
+## License
+
+MIT License — feel free to play, share, star, or fork!
