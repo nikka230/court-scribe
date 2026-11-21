@@ -56,6 +56,7 @@ interface Props {
   onUpdateLineTranslation: (lineId: string, th: string) => void;
   onSeamSpacesChange: (seams: Set<number>) => void;
   onPlayVoice: () => void;
+  activeWordRange: { cpStart: number; cpEnd: number } | null;
 }
 
 export function TranscriptPaper({
@@ -79,6 +80,7 @@ export function TranscriptPaper({
   onUpdateLineTranslation,
   onSeamSpacesChange,
   onPlayVoice,
+  activeWordRange,
 }: Props) {
   const [selectedWord, setSelectedWord] = useState<VocabHint | null>(null);
   const [loadingWord, setLoadingWord] = useState(false);
@@ -290,8 +292,20 @@ export function TranscriptPaper({
       );
     }
 
+    const isInSpokenWord =
+      activeWordRange !== null &&
+      c.cpStart >= activeWordRange.cpStart &&
+      c.cpEnd <= activeWordRange.cpEnd;
+
     return (
-      <span key={c.cpStart} className="text-[#2c2116]/72">
+      <span
+        key={c.cpStart}
+        className={
+          isInSpokenWord
+            ? 'border-b-2 border-[#c29124]/65 text-[#1f150a] transition-colors duration-75'
+            : 'text-[#2c2116]/72'
+        }
+      >
         {c.cluster === ' ' ? '\u00A0' : c.cluster}
       </span>
     );

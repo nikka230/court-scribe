@@ -1,4 +1,5 @@
 import type { Language, SpeakerRole } from '../types/game';
+import { tokenizeIntoAtomicWords } from './typingEngine';
 
 export const CHARACTER_VOICE_META: Record<
   SpeakerRole,
@@ -45,6 +46,23 @@ export const CHARACTER_VOICE_META: Record<
   },
 };
 
+export interface RawTimingEntry {
+  t: string; // spoken word text
+  s: number; // start sec
+  e: number; // end sec
+  a: number; // cpStart
+  b: number; // cpEnd
+}
+
+export interface SpokenWordSegment {
+  index: number;
+  text: string;
+  cpStart: number;
+  cpEnd: number;
+  startSec?: number;
+  endSec?: number;
+}
+
 export interface VoicePlayOptions {
   lineId: string;
   text: string;
@@ -57,10 +75,34 @@ export interface VoicePlayOptions {
   onAutoplayBlocked?: () => void;
 }
 
+export interface WordVoicePlayOptions extends VoicePlayOptions {
+  word: SpokenWordSegment;
+}
+
 class CourtVoiceEngine {
   private audio: HTMLAudioElement | null = null;
+  private ctx: AudioContext | null = null;
+  private activeSource: AudioBufferSourceNode | null = null;
+  private activeGain: GainNode | null = null;
   private activeToken = 0;
+
+  private timingsMap: Record<string, RawTimingEntry[]> | null = null;
+  private timingsPromise: Promise<Record<string, RawTimingEntry[]>> | null = null;
+  private bufferCache = new Map<string, AudioBuffer>();
+  private loadingBuffers = new Map<string, Promise<AudioBuffer | null>>();
   private missingIds = new Set<string>();
+
+  private ensureAudioContext(): AudioContext | null {
+    if (typeof window === 'undefined') return null;
+    if (!this.ctx) {
+      const Ctx =
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      if (!Ctx) return null;
+      this.ctx = new Ctx();
+    }
+    return this.ctx;
+  }
 
   public stop(): void {
     this.activeToken += 1;
@@ -70,6 +112,21 @@ class CourtVoiceEngine {
       this.audio.onended = null;
       this.audio.onerror = null;
       this.audio = null;
+    }
+    if (this.activeSource) {
+      try {
+        if (this.activeGain && this.ctx) {
+          const now = this.ctx.currentTime;
+          this.activeGain.gain.cancelScheduledValues(now);
+          this.activeGain.gain.setTargetAtTime(0.0001, now, 0.008);
+        }
+        this.activeSource.onended = null;
+        this.activeSource.stop(this.ctx ? this.ctx.currentTime + 0.025 : 0);
+      } catch {
+        // already stopped
+      }
+      this.activeSource = null;
+      this.activeGain = null;
     }
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       try {
@@ -81,8 +138,249 @@ class CourtVoiceEngine {
   }
 
   /**
-   * Plays character-matched studio neural MP3 (./voices/<lineId>.mp3) when available,
-   * seamlessly falling back to character-tuned Web Speech API for dynamic Wikipedia/Custom text.
+   * Load the compact timings.json map once (only ~25KB) for sample-accurate word-by-word neural playback.
+   */
+  public async loadTimings(): Promise<Record<string, RawTimingEntry[]>> {
+    if (this.timingsMap) return this.timingsMap;
+    if (typeof window === 'undefined' || window.location.protocol === 'file:') {
+      this.timingsMap = {};
+      return this.timingsMap;
+    }
+    if (!this.timingsPromise) {
+      this.timingsPromise = fetch('./voices/timings.json')
+        .then((res) => (res.ok ? res.json() : {}))
+        .then((data: unknown) => {
+          this.timingsMap =
+            data && typeof data === 'object' ? (data as Record<string, RawTimingEntry[]>) : {};
+          return this.timingsMap;
+        })
+        .catch(() => {
+          this.timingsMap = {};
+          return this.timingsMap;
+        });
+    }
+    return this.timingsPromise;
+  }
+
+  /**
+   * Preload and decode a built-in line's MP3 into an AudioBuffer so word-by-word slicing has 0ms latency!
+   */
+  public async preloadLineBuffer(lineId: string): Promise<AudioBuffer | null> {
+    if (
+      typeof window === 'undefined' ||
+      window.location.protocol === 'file:' ||
+      this.missingIds.has(lineId) ||
+      !/^[a-z0-9-]+$/i.test(lineId)
+    ) {
+      return null;
+    }
+    if (this.bufferCache.has(lineId)) {
+      return this.bufferCache.get(lineId)!;
+    }
+    if (this.loadingBuffers.has(lineId)) {
+      return this.loadingBuffers.get(lineId)!;
+    }
+
+    const p = (async () => {
+      try {
+        const res = await fetch(`./voices/${encodeURIComponent(lineId)}.mp3`);
+        if (!res.ok) {
+          this.missingIds.add(lineId);
+          return null;
+        }
+        const arr = await res.arrayBuffer();
+        const ctx = this.ensureAudioContext();
+        if (!ctx) return null;
+        const decoded = await ctx.decodeAudioData(arr);
+        this.bufferCache.set(lineId, decoded);
+        return decoded;
+      } catch {
+        this.missingIds.add(lineId);
+        return null;
+      } finally {
+        this.loadingBuffers.delete(lineId);
+      }
+    })();
+
+    this.loadingBuffers.set(lineId, p);
+    return p;
+  }
+
+  /**
+   * Return word-by-word segments for any line:
+   * - Uses exact neural WordBoundary timestamps for built-in cases when timings.json is loaded
+   * - For dynamic Thai/EN text: keeps space-delimited short words/names intact (e.g. "วินเซนต์" stays 1 whole word!)
+   *   and uses Intl.Segmenter word boundaries for long continuous Thai phrases.
+   */
+  public getWordSegments(lineId: string, text: string, lang: Language): SpokenWordSegment[] {
+    const timed = this.timingsMap?.[lineId];
+    if (timed && timed.length > 0) {
+      return timed.map((entry, idx) => ({
+        index: idx,
+        text: entry.t,
+        cpStart: entry.a,
+        cpEnd: entry.b,
+        startSec: entry.s,
+        endSec: entry.e,
+      }));
+    }
+
+    const tokens = tokenizeIntoAtomicWords(text, lang);
+    const segments: SpokenWordSegment[] = [];
+
+    if (lang === 'th') {
+      // Group consecutive non-space tokens between spaces; if the whole chunk is <= 12 code points
+      // (e.g. names/loanwords like "เดวิด", "วินเซนต์", "เอกชัย"), keep it as ONE spoken word!
+      let group: typeof tokens = [];
+      const flushGroup = () => {
+        if (group.length === 0) return;
+        const cpStart = group[0].cpStart;
+        const cpEnd = group[group.length - 1].cpEnd;
+        const combinedText = group.map((g) => g.text).join('');
+        if (cpEnd - cpStart <= 12) {
+          segments.push({
+            index: segments.length,
+            text: combinedText,
+            cpStart,
+            cpEnd,
+          });
+        } else {
+          for (const tok of group) {
+            segments.push({
+              index: segments.length,
+              text: tok.text,
+              cpStart: tok.cpStart,
+              cpEnd: tok.cpEnd,
+            });
+          }
+        }
+        group = [];
+      };
+
+      for (const tok of tokens) {
+        if (tok.isSpace) {
+          flushGroup();
+        } else {
+          group.push(tok);
+        }
+      }
+      flushGroup();
+      return segments;
+    }
+
+    for (const tok of tokens) {
+      if (tok.isSpace) continue;
+      segments.push({
+        index: segments.length,
+        text: tok.text,
+        cpStart: tok.cpStart,
+        cpEnd: tok.cpEnd,
+      });
+    }
+    return segments;
+  }
+
+  /**
+   * Speak ONE specific word cleanly:
+   * 1) If pre-generated neural MP3 + word timestamp exists -> sample-accurate Web Audio slice with soft fade!
+   * 2) Otherwise (Wikipedia / Custom / Dynamic) -> Character-tuned Web Speech API for that single word!
+   */
+  public async playWord(opts: WordVoicePlayOptions): Promise<'mp3-word' | 'tts-word' | 'blocked'> {
+    this.stop();
+    const token = this.activeToken;
+
+    if (!opts.word.text.trim() || opts.volume <= 0) {
+      opts.onEnd?.();
+      return 'tts-word';
+    }
+
+    // Path 1: Sample-accurate Neural MP3 word slice (0ms latency once preloaded!)
+    if (
+      opts.word.startSec !== undefined &&
+      opts.word.endSec !== undefined &&
+      window.location.protocol !== 'file:'
+    ) {
+      const buf = await this.preloadLineBuffer(opts.lineId);
+      if (token !== this.activeToken) return 'mp3-word';
+
+      if (buf) {
+        const ctx = this.ensureAudioContext();
+        if (ctx) {
+          if (ctx.state === 'suspended') {
+            try {
+              await ctx.resume();
+            } catch {
+              // ignore
+            }
+          }
+          if (token !== this.activeToken) return 'mp3-word';
+
+          if (ctx.state === 'suspended') {
+            opts.onAutoplayBlocked?.();
+            opts.onEnd?.();
+            return 'blocked';
+          }
+
+          const padBefore = 0.018;
+          const padAfter = 0.055;
+          const offset = Math.max(0, opts.word.startSec - padBefore);
+          const endPos = Math.min(buf.duration, opts.word.endSec + padAfter);
+          const sliceDur = Math.max(0.11, endPos - offset);
+          const rate = Math.min(1.35, Math.max(0.7, opts.rate));
+          const realDur = sliceDur / rate;
+
+          const source = ctx.createBufferSource();
+          source.buffer = buf;
+          source.playbackRate.value = rate;
+
+          const gain = ctx.createGain();
+          const now = ctx.currentTime;
+          const targetVol = Math.min(1, Math.max(0.15, opts.volume));
+          const fadeIn = Math.min(0.012, realDur * 0.2);
+          const fadeOut = Math.min(0.028, realDur * 0.25);
+
+          gain.gain.setValueAtTime(0.001, now);
+          gain.gain.linearRampToValueAtTime(targetVol, now + fadeIn);
+          gain.gain.setValueAtTime(targetVol, now + Math.max(fadeIn, realDur - fadeOut));
+          gain.gain.linearRampToValueAtTime(0.001, now + realDur);
+
+          source.connect(gain);
+          gain.connect(ctx.destination);
+
+          this.activeSource = source;
+          this.activeGain = gain;
+
+          source.onended = () => {
+            if (token === this.activeToken) {
+              this.activeSource = null;
+              this.activeGain = null;
+              opts.onEnd?.();
+            }
+          };
+
+          opts.onStart?.();
+          source.start(now, offset, sliceDur);
+          return 'mp3-word';
+        }
+      }
+    }
+
+    // Path 2: Clean single-word Character-Tuned Web Speech API (for Wikipedia / Random / Custom / Fallback!)
+    const cleanWord = opts.word.text
+      .replace(/^["'([{\s.,!?;:\-]+|["')\]}\s.,!?;:\-]+$/g, '')
+      .trim();
+
+    if (!cleanWord) {
+      opts.onEnd?.();
+      return 'tts-word';
+    }
+
+    this.playWebSpeech({ ...opts, text: cleanWord }, token);
+    return 'tts-word';
+  }
+
+  /**
+   * Plays full sentence character-matched studio neural MP3 when in Sentence Mode.
    */
   public async playLine(opts: VoicePlayOptions): Promise<'mp3' | 'tts' | 'blocked'> {
     this.stop();
@@ -93,7 +391,6 @@ class CourtVoiceEngine {
       return 'tts';
     }
 
-    // Attempt pre-generated Neural MP3 first (unless known missing or running file:// without voices)
     const canTryMp3 =
       typeof window !== 'undefined' &&
       window.location.protocol !== 'file:' &&
@@ -109,11 +406,9 @@ class CourtVoiceEngine {
         opts.onEnd?.();
         return 'blocked';
       }
-      // 404 or decode error -> cache as missing so dynamic Wikipedia lines don't re-request
       this.missingIds.add(opts.lineId);
     }
 
-    // Fallback: Character-tuned Web Speech API (works for ANY dynamic Wikipedia/Custom/Random sentence!)
     this.playWebSpeech(opts, token);
     return 'tts';
   }

@@ -77,6 +77,7 @@ export function getDefaultSettings(): UserSettings {
     autoLayoutMapping: false,
     translationMode: 'visible',
     autoVoiceEnabled: true,
+    voiceMode: 'word',
     voiceRate: 1.0,
     autoReadAloudEn: true,
     ttsRate: 0.95,

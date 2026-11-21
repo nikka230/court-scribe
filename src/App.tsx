@@ -113,10 +113,13 @@ export function App() {
   const [shiftHeld, setShiftHeld] = useState(false);
   const [peekActive, setPeekActive] = useState(false);
 
-  // Character voice playback state (Item #1)
+  // Character voice playback state (Word-by-Word + Sentence mode)
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [autoplayBlocked, setAutoplayBlocked] = useState(false);
+  const [timingsReady, setTimingsReady] = useState(false);
   const pendingVoiceUnlockRef = useRef(false);
+  const lastSpokenWordKeyRef = useRef<string>('');
+  const suppressWordVoiceRef = useRef(false);
 
   // Locked visual-row seam spaces (Item #6)
   const seamSpacesRef = useRef<Set<number>>(new Set());
@@ -213,29 +216,92 @@ export function App() {
     });
   }, []);
 
-  // Character-matched voice playback helper (Item #1)
-  const playCurrentLineVoice = useCallback(() => {
-    if (!currentLine) return;
-    setAutoplayBlocked(false);
-    pendingVoiceUnlockRef.current = false;
-    voiceEngine.playLine({
-      lineId: currentLine.id,
-      text: currentLine.text,
-      lang: dossier.language,
-      speaker: currentLine.speaker || 'witness',
-      rate: settings.voiceRate || 1.0,
-      volume: Math.max(0.25, settings.volume),
-      onStart: () => {
-        setIsSpeaking(true);
-        setAutoplayBlocked(false);
-      },
-      onEnd: () => setIsSpeaking(false),
-      onAutoplayBlocked: () => {
-        setAutoplayBlocked(true);
-        pendingVoiceUnlockRef.current = true;
-      },
-    });
-  }, [currentLine, dossier.language, settings.voiceRate, settings.volume]);
+  // Load word-by-word neural timing manifest once on startup
+  useEffect(() => {
+    voiceEngine.loadTimings().then(() => setTimingsReady(true));
+  }, []);
+
+  // Preload current + next line's neural MP3 buffers for 0ms word-by-word playback
+  useEffect(() => {
+    if (!currentLine || dossier.youtubeId) return;
+    voiceEngine.preloadLineBuffer(currentLine.id);
+    const upcoming = dossier.lines[currentLineIdx + 1];
+    if (upcoming) {
+      voiceEngine.preloadLineBuffer(upcoming.id);
+    }
+  }, [currentLine, currentLineIdx, dossier.lines, dossier.youtubeId]);
+
+  const spokenWords = useMemo(() => {
+    if (!currentLine) return [];
+    void timingsReady;
+    return voiceEngine.getWordSegments(currentLine.id, currentLine.text, dossier.language);
+  }, [currentLine, dossier.language, timingsReady]);
+
+  // Active word to read aloud (first word whose cpEnd > charIndex -> automatically advances the moment a word is finished!)
+  const activeWord = useMemo(() => {
+    if (spokenWords.length === 0) return null;
+    return spokenWords.find((w) => w.cpEnd > charIndex) || null;
+  }, [spokenWords, charIndex]);
+
+  // Character-matched voice playback helper (supports Word-by-Word OR Full Sentence mode)
+  const playCurrentLineVoice = useCallback(
+    (forceSentence = false) => {
+      if (!currentLine) return;
+      setAutoplayBlocked(false);
+      pendingVoiceUnlockRef.current = false;
+
+      if (!forceSentence && settings.voiceMode === 'word' && activeWord) {
+        lastSpokenWordKeyRef.current = `${dossier.id}:${currentLineIdx}:${activeWord.cpStart}`;
+        voiceEngine.playWord({
+          lineId: currentLine.id,
+          text: currentLine.text,
+          word: activeWord,
+          lang: dossier.language,
+          speaker: currentLine.speaker || 'witness',
+          rate: settings.voiceRate || 1.0,
+          volume: Math.max(0.25, settings.volume),
+          onStart: () => {
+            setIsSpeaking(true);
+            setAutoplayBlocked(false);
+          },
+          onEnd: () => setIsSpeaking(false),
+          onAutoplayBlocked: () => {
+            setAutoplayBlocked(true);
+            pendingVoiceUnlockRef.current = true;
+          },
+        });
+        return;
+      }
+
+      voiceEngine.playLine({
+        lineId: currentLine.id,
+        text: currentLine.text,
+        lang: dossier.language,
+        speaker: currentLine.speaker || 'witness',
+        rate: settings.voiceRate || 1.0,
+        volume: Math.max(0.25, settings.volume),
+        onStart: () => {
+          setIsSpeaking(true);
+          setAutoplayBlocked(false);
+        },
+        onEnd: () => setIsSpeaking(false),
+        onAutoplayBlocked: () => {
+          setAutoplayBlocked(true);
+          pendingVoiceUnlockRef.current = true;
+        },
+      });
+    },
+    [
+      currentLine,
+      currentLineIdx,
+      dossier.id,
+      dossier.language,
+      settings.voiceMode,
+      settings.voiceRate,
+      settings.volume,
+      activeWord,
+    ]
+  );
 
   const stopCurrentVoice = useCallback(() => {
     voiceEngine.stop();
@@ -244,22 +310,68 @@ export function App() {
     pendingVoiceUnlockRef.current = false;
   }, []);
 
-  // Auto-play character voice on every new sentence (unless YouTube video is providing its own audio)
+  // Auto-play Word-by-Word as soon as player enters each new word (or full sentence if in sentence mode)
   useEffect(() => {
     if (!settings.autoVoiceEnabled || !currentLine || anyModalOpen || dossier.youtubeId) {
       return;
     }
+
+    if (settings.voiceMode === 'word') {
+      if (!activeWord) return;
+      const wordKey = `${dossier.id}:${currentLineIdx}:${activeWord.cpStart}`;
+      if (suppressWordVoiceRef.current) {
+        suppressWordVoiceRef.current = false;
+        lastSpokenWordKeyRef.current = wordKey;
+        return;
+      }
+      if (lastSpokenWordKeyRef.current === wordKey) return;
+      lastSpokenWordKeyRef.current = wordKey;
+
+      const delay = charIndex === 0 ? 120 : 10;
+      const timer = setTimeout(() => {
+        voiceEngine.playWord({
+          lineId: currentLine.id,
+          text: currentLine.text,
+          word: activeWord,
+          lang: dossier.language,
+          speaker: currentLine.speaker || 'witness',
+          rate: settings.voiceRate || 1.0,
+          volume: Math.max(0.25, settings.volume),
+          onStart: () => {
+            setIsSpeaking(true);
+            setAutoplayBlocked(false);
+          },
+          onEnd: () => setIsSpeaking(false),
+          onAutoplayBlocked: () => {
+            setAutoplayBlocked(true);
+            pendingVoiceUnlockRef.current = true;
+          },
+        });
+      }, delay);
+      return () => clearTimeout(timer);
+    }
+
+    // Sentence mode: speak full sentence once per line
+    const lineKey = `sentence:${dossier.id}:${currentLineIdx}`;
+    if (lastSpokenWordKeyRef.current === lineKey) return;
+    lastSpokenWordKeyRef.current = lineKey;
     const timer = setTimeout(() => {
-      playCurrentLineVoice();
+      playCurrentLineVoice(true);
     }, 180);
     return () => clearTimeout(timer);
   }, [
     settings.autoVoiceEnabled,
+    settings.voiceMode,
+    settings.voiceRate,
+    settings.volume,
     dossier.id,
+    dossier.language,
     dossier.youtubeId,
     currentLineIdx,
-    anyModalOpen,
     currentLine,
+    activeWord,
+    charIndex,
+    anyModalOpen,
     playCurrentLineVoice,
   ]);
 
@@ -336,6 +448,8 @@ export function App() {
       sessionKeyStatsRef.current = {};
       wpmHistoryRef.current = [];
       lastSampleSecRef.current = 0;
+      lastSpokenWordKeyRef.current = '';
+      suppressWordVoiceRef.current = false;
 
       if (playGavel) {
         audioEngine.playGavelStrike(settings.soundProfile, settings.volume, true);
@@ -529,6 +643,7 @@ export function App() {
           while (cut > 0 && seamSpacesRef.current.has(cut)) {
             cut -= 1;
           }
+          suppressWordVoiceRef.current = true;
           setTypedChars((prev) => prev.slice(0, cut));
           setLastPressedCode('Backspace');
           setLastHitState('idle');
@@ -1010,13 +1125,20 @@ export function App() {
             isSpeaking={isSpeaking}
             autoplayBlocked={autoplayBlocked}
             autoVoiceEnabled={settings.autoVoiceEnabled}
+            voiceMode={settings.voiceMode}
             voiceRate={settings.voiceRate}
-            onPlayVoice={playCurrentLineVoice}
+            activeWordText={activeWord?.text}
+            onPlayVoice={() => playCurrentLineVoice(false)}
             onStopVoice={stopCurrentVoice}
             onToggleAutoVoice={() => {
               const next = !settings.autoVoiceEnabled;
               updateSettings({ autoVoiceEnabled: next });
               if (!next) stopCurrentVoice();
+              else lastSpokenWordKeyRef.current = '';
+            }}
+            onChangeVoiceMode={(m) => {
+              lastSpokenWordKeyRef.current = '';
+              updateSettings({ voiceMode: m });
             }}
             onChangeVoiceRate={(r) => updateSettings({ voiceRate: r, ttsRate: r })}
             activeChallenge={activeChallenge}
@@ -1050,7 +1172,12 @@ export function App() {
             onPeekToggle={setPeekActive}
             onUpdateLineTranslation={handleUpdateLineTranslation}
             onSeamSpacesChange={handleSeamSpacesChange}
-            onPlayVoice={playCurrentLineVoice}
+            onPlayVoice={() => playCurrentLineVoice(true)}
+            activeWordRange={
+              settings.voiceMode === 'word' && activeWord
+                ? { cpStart: activeWord.cpStart, cpEnd: activeWord.cpEnd }
+                : null
+            }
           />
 
           <div className="flex flex-wrap items-center justify-between gap-2 px-1 text-xs text-[#cbb89d]">

@@ -22,6 +22,7 @@ import type {
   GameMode,
   PassageLine,
   SpeakerRole,
+  VoiceMode,
 } from '../types/game';
 import { CHARACTER_VOICE_META } from '../engine/voiceEngine';
 import judgeImg from '../assets/char-judge.jpg';
@@ -77,10 +78,13 @@ interface Props {
   isSpeaking: boolean;
   autoplayBlocked: boolean;
   autoVoiceEnabled: boolean;
+  voiceMode: VoiceMode;
   voiceRate: number;
+  activeWordText?: string;
   onPlayVoice: () => void;
   onStopVoice: () => void;
   onToggleAutoVoice: () => void;
+  onChangeVoiceMode: (m: VoiceMode) => void;
   onChangeVoiceRate: (rate: number) => void;
   activeChallenge: ActiveChallenge | null;
   personalBestWpm: number;
@@ -100,10 +104,13 @@ export function CourtroomStage({
   isSpeaking,
   autoplayBlocked,
   autoVoiceEnabled,
+  voiceMode,
   voiceRate,
+  activeWordText,
   onPlayVoice,
   onStopVoice,
   onToggleAutoVoice,
+  onChangeVoiceMode,
   onChangeVoiceRate,
   activeChallenge,
   personalBestWpm,
@@ -256,15 +263,47 @@ export function CourtroomStage({
                 {isSpeaking ? (
                   <>
                     <StopCircle weight="fill" className="h-3.5 w-3.5" />
-                    กำลังอ่านเสียง ({voiceMeta.badgeTh.split('·')[0].trim()})
+                    {voiceMode === 'word' && activeWordText
+                      ? `กำลังอ่าน: "${activeWordText}"`
+                      : `กำลังอ่าน (${voiceMeta.badgeTh.split('·')[0].trim()})`}
                   </>
                 ) : (
                   <>
                     <SpeakerHigh weight="fill" className="h-3.5 w-3.5" />
-                    {autoplayBlocked ? 'กดเพื่อเริ่มเสียงพากย์ (F2)' : 'เล่นเสียงพากย์ (F2)'}
+                    {autoplayBlocked
+                      ? 'กดเริ่มเสียงทีละคำ (F2)'
+                      : voiceMode === 'word' && activeWordText
+                      ? `อ่านคำ: "${activeWordText}" (F2)`
+                      : 'เล่นเสียงพากย์ (F2)'}
                   </>
                 )}
               </button>
+
+              {/* Word-by-Word vs Full-Sentence mode switcher */}
+              <div className="inline-flex overflow-hidden rounded-lg border border-[#d4af37]/30 bg-black/45 text-[10px] font-bold">
+                <button
+                  type="button"
+                  onClick={() => onChangeVoiceMode('word')}
+                  className={`px-2 py-1 transition cursor-pointer ${
+                    voiceMode === 'word'
+                      ? 'bg-[#d4af37] text-[#140e07]'
+                      : 'text-[#cbb89d] hover:bg-white/10'
+                  }`}
+                >
+                  ทีละคำ
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onChangeVoiceMode('sentence')}
+                  className={`px-2 py-1 transition cursor-pointer ${
+                    voiceMode === 'sentence'
+                      ? 'bg-[#d4af37] text-[#140e07]'
+                      : 'text-[#cbb89d] hover:bg-white/10'
+                  }`}
+                >
+                  ทั้งประโยค
+                </button>
+              </div>
 
               <button
                 type="button"
@@ -274,10 +313,10 @@ export function CourtroomStage({
                     ? 'border-[#2ea673]/50 bg-[#2ea673]/18 text-[#88ebb9]'
                     : 'border-white/15 bg-white/5 text-[#a8957c]'
                 }`}
-                title="เปิด/ปิด การเล่นเสียงตัวละครอัตโนมัติทุกประโยค"
+                title="เปิด/ปิด การเล่นเสียงตัวละครอัตโนมัติ"
               >
                 <Waveform weight="bold" className="h-3 w-3" />
-                {autoVoiceEnabled ? 'เสียงอัตโนมัติ: เปิด' : 'เสียงอัตโนมัติ: ปิด'}
+                {autoVoiceEnabled ? 'อัตโนมัติ: เปิด' : 'อัตโนมัติ: ปิด'}
               </button>
 
               <div className="inline-flex overflow-hidden rounded-lg border border-white/12 bg-black/40 text-[10px] font-semibold">
@@ -296,8 +335,6 @@ export function CourtroomStage({
                   </button>
                 ))}
               </div>
-
-              <span className="hidden text-[11px] text-[#baa78d] xl:inline">· {moodNote}</span>
             </div>
 
             {/* Case Progress Bar */}

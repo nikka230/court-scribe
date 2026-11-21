@@ -59,11 +59,39 @@ export function SettingsModal({ open, onClose, settings, onChange }: Props) {
 
             <ToggleRow
               icon={<SpeakerHigh className="h-4 w-4 text-[#f2d583]" />}
-              label="เล่นเสียงตัวละครอัตโนมัติทุกประโยค"
+              label="เล่นเสียงตัวละครอัตโนมัติ"
               desc="เปิดเสียงพากย์ตรงตามคาแรคเตอร์ทั้งไทยและอังกฤษให้พิมพ์ตามเสียงได้ทันที (กด F2 เล่นซ้ำ)"
               checked={settings.autoVoiceEnabled}
               onToggle={(v) => onChange({ autoVoiceEnabled: v })}
             />
+
+            <div className="flex items-center justify-between pt-1">
+              <span className="text-xs text-[#d7c6ae]">จังหวะการอ่านเสียง</span>
+              <div className="inline-flex overflow-hidden rounded-lg border border-white/15 bg-black/40 text-xs">
+                <button
+                  type="button"
+                  onClick={() => onChange({ voiceMode: 'word' })}
+                  className={`px-3 py-1 font-semibold cursor-pointer ${
+                    settings.voiceMode === 'word'
+                      ? 'bg-[#d4af37] text-[#140e07]'
+                      : 'text-[#cbb89d] hover:bg-white/10'
+                  }`}
+                >
+                  พูดทีละคำตามที่พิมพ์
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onChange({ voiceMode: 'sentence' })}
+                  className={`px-3 py-1 font-semibold cursor-pointer ${
+                    settings.voiceMode === 'sentence'
+                      ? 'bg-[#d4af37] text-[#140e07]'
+                      : 'text-[#cbb89d] hover:bg-white/10'
+                  }`}
+                >
+                  อ่านทั้งประโยค
+                </button>
+              </div>
+            </div>
 
             <div className="flex items-center justify-between pt-1">
               <span className="text-xs text-[#d7c6ae]">ความเร็วเสียงพากย์ตัวละคร</span>

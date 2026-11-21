@@ -18,6 +18,8 @@ export type SoundProfile = 'brass-typewriter' | 'mechanical-thock' | 'silent';
 
 export type GameMode = 'trial' | 'zen';
 
+export type VoiceMode = 'word' | 'sentence';
+
 export interface VocabHint {
   word: string;
   ipa?: string;
@@ -150,7 +152,8 @@ export interface UserSettings {
   showFingerHands: boolean;
   autoLayoutMapping: boolean; // Allows typing via physical key codes without switching OS IME
   translationMode: TranslationMode;
-  autoVoiceEnabled: boolean; // Auto-play character voice on every new sentence (TH & EN)
+  autoVoiceEnabled: boolean; // Auto-play character voice on every new sentence/word (TH & EN)
+  voiceMode: VoiceMode; // 'word' = speak word-by-word as player types, 'sentence' = full sentence
   voiceRate: number; // 0.75 - 1.25
   autoReadAloudEn: boolean; // Legacy alias kept for storage compatibility
   ttsRate: number;
