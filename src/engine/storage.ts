@@ -1,4 +1,4 @@
-import type { SavedVocabItem, SessionResult, UserProfile, UserSettings } from '../types/game';
+import type { CaseDossier, SavedVocabItem, SessionResult, UserProfile, UserSettings } from '../types/game';
 import { DEFAULT_GOOGLE_SHEET_URL } from './sheetsService';
 
 const PROFILE_KEY = 'court_scribe_profile_v1';
@@ -43,6 +43,7 @@ export function getDefaultProfile(): UserProfile {
     keyStatsTh: {},
     keyStatsEn: {},
     history: [],
+    customStages: [],
     vocabNotebook: [
       {
         word: 'verdict',
@@ -97,6 +98,7 @@ export function loadProfile(): UserProfile {
       ...parsed,
       googleSheetUrl: parsed.googleSheetUrl || DEFAULT_GOOGLE_SHEET_URL,
       caseBestWpm: parsed.caseBestWpm || {},
+      customStages: Array.isArray(parsed.customStages) ? parsed.customStages : [],
     };
   } catch {
     return getDefaultProfile();
@@ -211,6 +213,35 @@ export function upsertVocabInProfile(
     ];
   }
   const updated = { ...profile, vocabNotebook: nextNotebook };
+  saveProfile(updated);
+  return updated;
+}
+
+export function saveCustomStageToProfile(
+  profile: UserProfile,
+  stage: CaseDossier
+): UserProfile {
+  const cleanStage: CaseDossier = {
+    ...stage,
+    id: stage.id.startsWith('user-stage-') ? stage.id : `user-stage-${Date.now()}`,
+  };
+  const exists = profile.customStages.some((s) => s.id === cleanStage.id);
+  const nextStages = exists
+    ? profile.customStages.map((s) => (s.id === cleanStage.id ? cleanStage : s))
+    : [cleanStage, ...profile.customStages];
+  const updated = { ...profile, customStages: nextStages.slice(0, 60) };
+  saveProfile(updated);
+  return updated;
+}
+
+export function deleteCustomStageFromProfile(
+  profile: UserProfile,
+  stageId: string
+): UserProfile {
+  const updated = {
+    ...profile,
+    customStages: profile.customStages.filter((s) => s.id !== stageId),
+  };
   saveProfile(updated);
   return updated;
 }

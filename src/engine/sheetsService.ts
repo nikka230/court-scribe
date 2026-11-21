@@ -1,4 +1,5 @@
-import type { Language, SessionResult, SheetScoreRow } from '../types/game';
+import type { CaseDossier, Language, SessionResult, SheetScoreRow } from '../types/game';
+import { splitIntoTranscriptLines } from './contentLoaders';
 
 /**
  * Optional hardcoded default Google Apps Script Web App URL.
@@ -14,6 +15,7 @@ export const GOOGLE_APPS_SCRIPT_TEMPLATE = `// === COURT SCRIBE — Google Sheet
 // ตั้งค่า Execute as: Me และ Who has access: Anyone -> คัดลอก Web app URL มาวางในเกม!
 
 const SHEET_NAME = 'CourtScribe_Records';
+const STAGES_SHEET_NAME = 'CourtScribe_Stages';
 
 function getOrCreateSheet() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -38,6 +40,17 @@ function getOrCreateSheet() {
   return sheet;
 }
 
+function getOrCreateStagesSheet() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = ss.getSheetByName(STAGES_SHEET_NAME);
+  if (!sheet) {
+    sheet = ss.insertSheet(STAGES_SHEET_NAME);
+    sheet.appendRow(['title', 'language', 'category', 'youtubeUrl', 'text']);
+    sheet.getRange(1, 1, 1, 5).setFontWeight('bold');
+  }
+  return sheet;
+}
+
 function jsonOut(obj) {
   return ContentService
     .createTextOutput(JSON.stringify(obj))
@@ -49,6 +62,24 @@ function doGet(e) {
     const action = (e && e.parameter && e.parameter.action) || 'list';
     if (action === 'ping') {
       return jsonOut({ ok: true, service: 'court-scribe-sheets' });
+    }
+    if (action === 'stages') {
+      const stageSheet = getOrCreateStagesSheet();
+      const svals = stageSheet.getDataRange().getValues();
+      if (svals.length <= 1) return jsonOut({ ok: true, stages: [] });
+      const stages = svals.slice(1)
+        .filter(function(r) { return String(r[4] || '').trim().length > 10; })
+        .map(function(r, idx) {
+          return {
+            id: 'sheet-stage-' + idx,
+            title: String(r[0] || 'ด่านจาก Google Sheet #' + (idx + 1)),
+            language: String(r[1] || 'th').toLowerCase() === 'en' ? 'en' : 'th',
+            category: String(r[2] || 'ด่านอัปเดตจาก Google Sheet'),
+            youtubeUrl: String(r[3] || ''),
+            text: String(r[4] || '')
+          };
+        });
+      return jsonOut({ ok: true, stages: stages });
     }
     const sheet = getOrCreateSheet();
     const values = sheet.getDataRange().getValues();
@@ -221,6 +252,49 @@ export async function fetchLeaderboardFromGoogleSheet(
         | 'C',
       durationSec: Number(r.durationSec || 0),
     }));
+  } catch {
+    clearTimeout(t);
+    return [];
+  }
+}
+
+/**
+ * Fetch user-updated custom stages directly from the "CourtScribe_Stages" tab in Google Sheets!
+ * Lets the game owner push fresh stages to all players simply by adding rows in Google Sheets.
+ */
+export async function fetchStagesFromGoogleSheet(sheetUrl: string): Promise<CaseDossier[]> {
+  const clean = sheetUrl.trim();
+  if (!isValidSheetUrl(clean)) return [];
+
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), 9000);
+  try {
+    const res = await fetch(`${clean}?action=stages`, { signal: ctrl.signal });
+    clearTimeout(t);
+    if (!res.ok) return [];
+    const data = await res.json();
+    if (!data?.ok || !Array.isArray(data.stages)) return [];
+
+    return data.stages
+      .map((s: Record<string, unknown>, idx: number): CaseDossier | null => {
+        const lang: Language = String(s.language || 'th').toLowerCase() === 'en' ? 'en' : 'th';
+        const rawText = String(s.text || '');
+        const lines = splitIntoTranscriptLines(rawText, lang, 16, 'ด่านจาก Google Sheet');
+        if (lines.length === 0) return null;
+        return {
+          id: String(s.id || `sheet-stage-${idx}`),
+          caseCode: `SHEET #${idx + 1}`,
+          title: String(s.title || `ด่านอัปเดต #${idx + 1}`),
+          subtitle: 'อัปเดตสดจาก Google Sheet โดยผู้สร้าง',
+          language: lang,
+          sourceKind: 'custom',
+          difficulty: 'senior',
+          category: String(s.category || 'ด่านอัปเดตจาก Google Sheet'),
+          sourceUrl: String(s.youtubeUrl || '') || undefined,
+          lines,
+        };
+      })
+      .filter((d: CaseDossier | null): d is CaseDossier => d !== null);
   } catch {
     clearTimeout(t);
     return [];

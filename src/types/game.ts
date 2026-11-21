@@ -143,6 +143,7 @@ export interface UserProfile {
   keyStatsEn: Record<string, KeyStat>;
   history: SessionResult[];
   vocabNotebook: SavedVocabItem[];
+  customStages: CaseDossier[];
 }
 
 export interface UserSettings {

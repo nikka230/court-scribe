@@ -77,7 +77,7 @@ export function SettingsModal({ open, onClose, settings, onChange }: Props) {
                       : 'text-[#cbb89d] hover:bg-white/10'
                   }`}
                 >
-                  พูดทีละ 3-4 คำตามที่พิมพ์
+                  พูดตามวรรคตอนธรรมชาติ
                 </button>
                 <button
                   type="button"

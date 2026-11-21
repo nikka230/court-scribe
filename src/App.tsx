@@ -44,10 +44,12 @@ import { stopSpeaking } from './engine/translationService';
 import { readChallengeFromUrl } from './engine/challengeService';
 import { isValidSheetUrl, submitScoreToGoogleSheet } from './engine/sheetsService';
 import {
+  deleteCustomStageFromProfile,
   getRankForXp,
   loadProfile,
   loadSettings,
   recordSessionToProfile,
+  saveCustomStageToProfile,
   saveProfile,
   saveSettings,
   upsertVocabInProfile,
@@ -57,7 +59,7 @@ import { CourtShoutOverlay } from './components/CourtShoutOverlay';
 import { CourtroomStage } from './components/CourtroomStage';
 import { TranscriptPaper } from './components/TranscriptPaper';
 import { VirtualKeyboard } from './components/VirtualKeyboard';
-import { SourcePickerModal } from './components/SourcePickerModal';
+import { SourcePickerModal, type SourceTabId } from './components/SourcePickerModal';
 import { VerdictModal } from './components/VerdictModal';
 import { VocabNotebookModal } from './components/VocabNotebookModal';
 import { ProfileStatsModal } from './components/ProfileStatsModal';
@@ -140,9 +142,7 @@ export function App() {
   const [shout, setShout] = useState<CourtShout | null>(null);
   const [verdictResult, setVerdictResult] = useState<SessionResult | null>(null);
   const [sourceModalOpen, setSourceModalOpen] = useState(false);
-  const [sourceModalTab, setSourceModalTab] = useState<
-    'cases' | 'youtube' | 'wikipedia' | 'random' | 'custom'
-  >('cases');
+  const [sourceModalTab, setSourceModalTab] = useState<SourceTabId>('cases');
   const [vocabModalOpen, setVocabModalOpen] = useState(false);
   const [profileModalOpen, setProfileModalOpen] = useState(false);
   const [profileModalTab, setProfileModalTab] = useState<'career' | 'sheets'>('career');
@@ -221,15 +221,15 @@ export function App() {
     voiceEngine.loadTimings().then(() => setTimingsReady(true));
   }, []);
 
-  // Preload current + next line's neural MP3 buffers for 0ms word-by-word playback
+  // Preload current + next line's neural MP3 buffers for 0ms phrase playback (including YouTube caption dictation!)
   useEffect(() => {
-    if (!currentLine || dossier.youtubeId) return;
+    if (!currentLine) return;
     voiceEngine.preloadLineBuffer(currentLine.id);
     const upcoming = dossier.lines[currentLineIdx + 1];
     if (upcoming) {
       voiceEngine.preloadLineBuffer(upcoming.id);
     }
-  }, [currentLine, currentLineIdx, dossier.lines, dossier.youtubeId]);
+  }, [currentLine, currentLineIdx, dossier.lines]);
 
   const spokenWords = useMemo(() => {
     if (!currentLine) return [];
@@ -310,9 +310,9 @@ export function App() {
     pendingVoiceUnlockRef.current = false;
   }, []);
 
-  // Auto-play Word-by-Word as soon as player enters each new word (or full sentence if in sentence mode)
+  // Auto-play Natural Clause/Phrase Voice (works on ALL stages including YouTube captions & Wikipedia!)
   useEffect(() => {
-    if (!settings.autoVoiceEnabled || !currentLine || anyModalOpen || dossier.youtubeId) {
+    if (!settings.autoVoiceEnabled || !currentLine || anyModalOpen) {
       return;
     }
 
@@ -617,7 +617,7 @@ export function App() {
       if (e.ctrlKey || e.metaKey || e.altKey) return;
 
       // Unlock autoplay voice on the user's very first typing interaction if browser blocked initial autoplay
-      if (pendingVoiceUnlockRef.current && settings.autoVoiceEnabled && !dossier.youtubeId) {
+      if (pendingVoiceUnlockRef.current && settings.autoVoiceEnabled) {
         playCurrentLineVoice();
       }
 
@@ -912,6 +912,29 @@ export function App() {
     }
   };
 
+  const handleSaveCustomStage = useCallback((stage: CaseDossier) => {
+    setProfile((prev) => saveCustomStageToProfile(prev, stage));
+  }, []);
+
+  const handleDeleteCustomStage = useCallback((stageId: string) => {
+    setProfile((prev) => deleteCustomStageFromProfile(prev, stageId));
+  }, []);
+
+  const handleImportCustomStages = useCallback((stages: CaseDossier[]) => {
+    setProfile((prev) => {
+      let next = prev;
+      for (const s of stages) {
+        next = saveCustomStageToProfile(next, s);
+      }
+      return next;
+    });
+  }, []);
+
+  const isBuiltInCase = BUILT_IN_CASES.some((c) => c.id === dossier.id);
+  const isCurrentSavedStage = profile.customStages.some(
+    (s) => s.id === dossier.id || s.title === dossier.title
+  );
+
   const rank = getRankForXp(profile.xp);
   const currentCaseBestWpm = profile.caseBestWpm?.[dossier.id] || 0;
 
@@ -1143,6 +1166,9 @@ export function App() {
             onChangeVoiceRate={(r) => updateSettings({ voiceRate: r, ttsRate: r })}
             activeChallenge={activeChallenge}
             personalBestWpm={currentCaseBestWpm}
+            canSaveAsStage={!isBuiltInCase}
+            isSavedStage={isCurrentSavedStage}
+            onSaveAsStage={() => handleSaveCustomStage(dossier)}
           />
 
           <TranscriptPaper
@@ -1244,6 +1270,11 @@ export function App() {
         onClose={() => setSourceModalOpen(false)}
         initialTab={sourceModalTab}
         onSelectDossier={(d) => resetSession(d, true, false)}
+        customStages={profile.customStages}
+        onSaveCustomStage={handleSaveCustomStage}
+        onDeleteCustomStage={handleDeleteCustomStage}
+        onImportCustomStages={handleImportCustomStages}
+        googleSheetUrl={profile.googleSheetUrl}
       />
 
       <VerdictModal

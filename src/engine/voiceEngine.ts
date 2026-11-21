@@ -13,34 +13,34 @@ export const CHARACTER_VOICE_META: Record<
   }
 > = {
   judge: {
-    badgeTh: 'เสียงผู้พิพากษา · ทุ้มสุขุม',
-    badgeEn: 'Judge Voice · Deep Authoritative',
-    ttsPitch: 0.76,
-    ttsRateMul: 0.88,
+    badgeTh: 'เสียงผู้พิพากษา · สุขุมชัดเจน',
+    badgeEn: 'Judge Voice · Calm & Authoritative',
+    ttsPitch: 0.84,
+    ttsRateMul: 0.96,
     preferredEn: /ryan|george|daniel|christopher|guy|male/i,
     preferredTh: /niwat|male/i,
   },
   prosecutor: {
-    badgeTh: 'เสียงอัยการ · เฉียบคมเร้าใจ',
-    badgeEn: 'Prosecutor Voice · Sharp & Brisk',
-    ttsPitch: 0.94,
-    ttsRateMul: 1.08,
+    badgeTh: 'เสียงอัยการ · เฉียบคมมั่นใจ',
+    badgeEn: 'Prosecutor Voice · Crisp & Confident',
+    ttsPitch: 0.95,
+    ttsRateMul: 1.03,
     preferredEn: /christopher|david|mark|guy|male/i,
     preferredTh: /niwat|male/i,
   },
   defense: {
-    badgeTh: 'เสียงทนาย · นุ่มนวลมั่นใจ',
-    badgeEn: 'Defense Voice · Calm & Crisp',
-    ttsPitch: 1.06,
-    ttsRateMul: 0.96,
+    badgeTh: 'เสียงทนาย · นุ่มนวลเป็นธรรมชาติ',
+    badgeEn: 'Defense Voice · Steady & Articulate',
+    ttsPitch: 1.03,
+    ttsRateMul: 0.99,
     preferredEn: /andrew|brian|alex|google us english/i,
     preferredTh: /niwat|premwadee/i,
   },
   witness: {
-    badgeTh: 'เสียงพยาน · ชัดเจนจริงจัง',
-    badgeEn: 'Witness Voice · Earnest & Expressive',
-    ttsPitch: 1.15,
-    ttsRateMul: 1.04,
+    badgeTh: 'เสียงพยาน · ชัดเจนเป็นกันเอง',
+    badgeEn: 'Witness Voice · Natural & Clear',
+    ttsPitch: 1.09,
+    ttsRateMul: 1.01,
     preferredEn: /brian|eric|aria|jenny|samantha/i,
     preferredTh: /premwadee|niwat/i,
   },
@@ -283,46 +283,107 @@ class CourtVoiceEngine {
     return segments;
   }
 
+  /**
+   * Group word units into natural human breath/space clauses:
+   * - Thai: primarily follows natural space pauses (เว้นวรรค), merging tiny <=7-char connectors
+   *   and cleanly balancing extra-long unspaced clauses (>32 chars) at word boundaries!
+   * - English: follows natural punctuation/breath clauses of ~4-6 words without leaving tiny orphans.
+   */
   private groupIntoDictationPhrases(
     units: SpokenWordSegment[],
     fullText: string,
     lang: Language
   ): SpokenWordSegment[] {
-    if (units.length <= 4) {
-      if (units.length === 0) return [];
-      const cpArr = Array.from(fullText);
-      const first = units[0];
-      const last = units[units.length - 1];
-      return [
-        {
-          index: 0,
-          text: cpArr.slice(first.cpStart, last.cpEnd).join('').trim(),
-          cpStart: first.cpStart,
-          cpEnd: last.cpEnd,
-          startSec: first.startSec,
-          endSec: last.endSec,
-        },
-      ];
-    }
-
+    if (units.length === 0) return [];
     const cpArr = Array.from(fullText);
-    const phrases: SpokenWordSegment[] = [];
-    let bucket: SpokenWordSegment[] = [];
 
-    const flushBucket = () => {
-      if (bucket.length === 0) return;
+    const makePhrase = (bucket: SpokenWordSegment[], index: number): SpokenWordSegment => {
       const first = bucket[0];
       const last = bucket[bucket.length - 1];
-      phrases.push({
-        index: phrases.length,
+      return {
+        index,
         text: cpArr.slice(first.cpStart, last.cpEnd).join('').trim(),
         cpStart: first.cpStart,
         cpEnd: last.cpEnd,
         startSec: first.startSec,
         endSec: last.endSec,
-      });
-      bucket = [];
+      };
     };
+
+    if (lang === 'th') {
+      // Step 1: Split units by actual spaces (เว้นวรรค) first!
+      const spaceClauses: SpokenWordSegment[][] = [];
+      let cur: SpokenWordSegment[] = [];
+      for (let i = 0; i < units.length; i++) {
+        const u = units[i];
+        const prev = units[i - 1];
+        const hasSpaceBefore =
+          prev !== undefined &&
+          u.cpStart > prev.cpEnd &&
+          cpArr.slice(prev.cpEnd, u.cpStart).join('').includes(' ');
+
+        if (hasSpaceBefore && cur.length > 0) {
+          spaceClauses.push(cur);
+          cur = [u];
+        } else {
+          cur.push(u);
+        }
+      }
+      if (cur.length > 0) spaceClauses.push(cur);
+
+      // Step 2: Merge ultra-short space clauses (e.g. "ณ" + "บัดนี้", or "ไช่" + "หรือ" + "ฉั่ว")
+      // into natural ~10-32 char clauses so it never sounds choppy!
+      const mergedClauses: SpokenWordSegment[][] = [];
+      for (const cl of spaceClauses) {
+        const clLen = cl[cl.length - 1].cpEnd - cl[0].cpStart;
+        const prev = mergedClauses[mergedClauses.length - 1];
+        if (prev) {
+          const prevLen = prev[prev.length - 1].cpEnd - prev[0].cpStart;
+          if (
+            (prevLen <= 9 && prevLen + clLen + 1 <= 28) ||
+            (clLen <= 8 && prevLen + clLen + 1 <= 28)
+          ) {
+            prev.push(...cl);
+            continue;
+          }
+        }
+        mergedClauses.push([...cl]);
+      }
+
+      // Step 3: Split any unusually long unspaced Thai clause (>34 chars) cleanly at word midpoint
+      const finalPhrases: SpokenWordSegment[] = [];
+      for (const cl of mergedClauses) {
+        const totalLen = cl[cl.length - 1].cpEnd - cl[0].cpStart;
+        if (totalLen <= 34 || cl.length <= 4) {
+          finalPhrases.push(makePhrase(cl, finalPhrases.length));
+        } else {
+          const targetChunks = Math.ceil(totalLen / 25);
+          const targetLen = totalLen / targetChunks;
+          let sub: SpokenWordSegment[] = [];
+          for (let i = 0; i < cl.length; i++) {
+            sub.push(cl[i]);
+            const subLen = cl[i].cpEnd - sub[0].cpStart;
+            const remaining = cl.length - 1 - i;
+            if (subLen >= targetLen && remaining >= 2) {
+              finalPhrases.push(makePhrase(sub, finalPhrases.length));
+              sub = [];
+            }
+          }
+          if (sub.length > 0) {
+            finalPhrases.push(makePhrase(sub, finalPhrases.length));
+          }
+        }
+      }
+      return finalPhrases;
+    }
+
+    // English: natural conversational 4-6 word clauses aligned to punctuation & pauses
+    if (units.length <= 5) {
+      return [makePhrase(units, 0)];
+    }
+
+    const phrases: SpokenWordSegment[] = [];
+    let bucket: SpokenWordSegment[] = [];
 
     for (let i = 0; i < units.length; i++) {
       const u = units[i];
@@ -335,36 +396,32 @@ class CourtVoiceEngine {
       const phraseLen = u.cpEnd - bucket[0].cpStart;
       const sliceText = cpArr.slice(u.cpStart, u.cpEnd).join('');
 
-      // Check natural speech boundaries
       const endsWithHardPunct = /[.!?;:]$/.test(sliceText);
       const endsWithComma = /[,]$/.test(sliceText);
       const hasAudioPauseAfter =
         next !== undefined &&
         u.endSec !== undefined &&
         next.startSec !== undefined &&
-        next.startSec - u.endSec >= 0.24;
-      const hasThaiSpacePauseAfter =
-        lang === 'th' &&
-        next !== undefined &&
-        next.cpStart > u.cpEnd &&
-        cpArr.slice(u.cpEnd, next.cpStart).join('').includes(' ');
+        next.startSec - u.endSec >= 0.22;
 
       const shouldBreak =
         (count >= 2 && endsWithHardPunct) ||
-        (count >= 3 && (endsWithComma || hasAudioPauseAfter || hasThaiSpacePauseAfter)) ||
-        (count >= 3 && phraseLen >= (lang === 'th' ? 20 : 24)) ||
-        count >= 4;
+        (count >= 3 && (endsWithComma || hasAudioPauseAfter)) ||
+        (count >= 4 && phraseLen >= 28) ||
+        count >= 6;
 
       if (shouldBreak) {
-        // Avoid leaving a lonely 1-word orphan at the very end of the sentence
-        if (remainingAfter === 1 && count <= 3) {
+        if (remainingAfter <= 2 && count <= 4) {
           continue;
         }
-        flushBucket();
+        phrases.push(makePhrase(bucket, phrases.length));
+        bucket = [];
       }
     }
 
-    flushBucket();
+    if (bucket.length > 0) {
+      phrases.push(makePhrase(bucket, phrases.length));
+    }
     return phrases;
   }
 

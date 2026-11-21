@@ -15,6 +15,8 @@ import {
   Waveform,
   Sword,
   Trophy,
+  FloppyDisk,
+  Check,
 } from '@phosphor-icons/react';
 import type {
   ActiveChallenge,
@@ -88,6 +90,9 @@ interface Props {
   onChangeVoiceRate: (rate: number) => void;
   activeChallenge: ActiveChallenge | null;
   personalBestWpm: number;
+  canSaveAsStage?: boolean;
+  isSavedStage?: boolean;
+  onSaveAsStage?: () => void;
 }
 
 export function CourtroomStage({
@@ -114,6 +119,9 @@ export function CourtroomStage({
   onChangeVoiceRate,
   activeChallenge,
   personalBestWpm,
+  canSaveAsStage,
+  isSavedStage,
+  onSaveAsStage,
 }: Props) {
   const [showYoutubeVideo, setShowYoutubeVideo] = useState(true);
   const [ytSeekNonce, setYtSeekNonce] = useState(0);
@@ -242,9 +250,33 @@ export function CourtroomStage({
               )}
             </div>
 
-            <h2 className="mt-1 truncate text-base font-bold text-[#fff8eb] sm:text-lg">
-              {dossier.title}
-            </h2>
+            <div className="mt-1 flex items-center gap-2">
+              <h2 className="truncate text-base font-bold text-[#fff8eb] sm:text-lg">
+                {dossier.title}
+              </h2>
+              {canSaveAsStage && onSaveAsStage && (
+                <button
+                  type="button"
+                  onClick={onSaveAsStage}
+                  title="บันทึกด่านนี้เก็บไว้ใน 'ด่านของฉัน'"
+                  className={`inline-flex shrink-0 items-center gap-1 rounded-lg border px-2 py-0.5 text-[10px] font-bold transition cursor-pointer ${
+                    isSavedStage
+                      ? 'border-[#2ea673]/50 bg-[#2ea673]/20 text-[#88ebb9]'
+                      : 'border-[#d4af37]/35 bg-[#d4af37]/12 text-[#f2d583] hover:bg-[#d4af37]/25'
+                  }`}
+                >
+                  {isSavedStage ? (
+                    <>
+                      <Check weight="bold" className="h-3 w-3" /> เก็บในด่านของฉันแล้ว
+                    </>
+                  ) : (
+                    <>
+                      <FloppyDisk weight="bold" className="h-3 w-3" /> เก็บเป็นด่าน
+                    </>
+                  )}
+                </button>
+              )}
+            </div>
 
             {/* Character Voice Playback Controls Bar */}
             <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
@@ -272,18 +304,18 @@ export function CourtroomStage({
                 ) : (
                   <>
                     <SpeakerHigh weight="fill" className="h-3.5 w-3.5" />
-                    <span className="max-w-[210px] truncate">
+                    <span className="max-w-[230px] truncate">
                       {autoplayBlocked
-                        ? 'กดเริ่มเสียงทีละ 3-4 คำ (F2)'
+                        ? 'กดเริ่มเสียงตามวรรคตอน (F2)'
                         : voiceMode === 'word' && activeWordText
-                        ? `อ่านช่วง: "${activeWordText}" (F2)`
+                        ? `อ่านวรรค: "${activeWordText}" (F2)`
                         : 'เล่นเสียงพากย์ (F2)'}
                     </span>
                   </>
                 )}
               </button>
 
-              {/* 3-4 Word Phrase vs Full-Sentence mode switcher */}
+              {/* Natural Clause/Space vs Full-Sentence mode switcher */}
               <div className="inline-flex overflow-hidden rounded-lg border border-[#d4af37]/30 bg-black/45 text-[10px] font-bold">
                 <button
                   type="button"
@@ -294,7 +326,7 @@ export function CourtroomStage({
                       : 'text-[#cbb89d] hover:bg-white/10'
                   }`}
                 >
-                  ทีละ 3-4 คำ
+                  ตามวรรคตอน
                 </button>
                 <button
                   type="button"

@@ -360,13 +360,53 @@ function parseTimedTextXml(xml: string, lang: Language): PassageLine[] {
   return lines.filter((l) => l.text.length >= 6).slice(0, 30);
 }
 
+export interface TrendingTopicItem {
+  title: string;
+  views: number;
+}
+
+/**
+ * Fetch real-time Trending Wikipedia articles from yesterday via Wikimedia Pageviews REST API (100% CORS-enabled!).
+ * Gives players fresh, unpredictable real-world topics every single day with zero backend.
+ */
+export async function fetchTrendingWikipediaTitles(lang: Language): Promise<TrendingTopicItem[]> {
+  // Pageviews API publishes yesterday's top articles reliably
+  const d = new Date(Date.now() - 86400000 * 2);
+  const yyyy = d.getUTCFullYear();
+  const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(d.getUTCDate()).padStart(2, '0');
+
+  const url = `https://wikimedia.org/api/rest_v1/metrics/pageviews/top/${lang}.wikipedia/all-access/${yyyy}/${mm}/${dd}`;
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return [];
+    const data = await res.json();
+    const articles = data?.items?.[0]?.articles || [];
+    const skipPattern =
+      /^(Main_Page|หน้าหลัก|Special:|พิเศษ:|Wikipedia:|วิกิพีเดีย:|File:|ไฟล์:|Portal:|สถานีย่อย:|Category:|หมวดหมู่:|รายชื่อ)/i;
+
+    return articles
+      .filter(
+        (a: { article?: string; views?: number }) =>
+          a.article && !skipPattern.test(a.article) && !a.article.includes(':')
+      )
+      .slice(0, 12)
+      .map((a: { article: string; views: number }) => ({
+        title: a.article.replace(/_/g, ' '),
+        views: a.views || 0,
+      }));
+  } catch {
+    return [];
+  }
+}
+
 export async function tryAutoFetchYouTubeCaptions(
   videoId: string,
   lang: Language
 ): Promise<{ lines: PassageLine[]; detectedLang: Language } | null> {
   const langsToTry: Language[] = lang === 'th' ? ['th', 'en'] : ['en', 'th'];
 
-  const fetchWithTimeout = async (url: string, timeoutMs = 4500) => {
+  const fetchWithTimeout = async (url: string, timeoutMs = 4800) => {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), timeoutMs);
     try {
@@ -376,6 +416,63 @@ export async function tryAutoFetchYouTubeCaptions(
     }
   };
 
+  // Tier 1: Extract real signed captionTracks baseUrl from YouTube watch page via CORS proxy
+  const watchUrl = `https://www.youtube.com/watch?v=${videoId}`;
+  const proxyUrls = [
+    `https://api.allorigins.win/raw?url=${encodeURIComponent(watchUrl)}`,
+    `https://corsproxy.io/?${encodeURIComponent(watchUrl)}`,
+  ];
+
+  for (const pUrl of proxyUrls) {
+    try {
+      const res = await fetchWithTimeout(pUrl, 5000);
+      if (!res.ok) continue;
+      const html = await res.text();
+      const tracksMatch = html.match(/"captionTracks":(\[.*?\])/);
+      if (!tracksMatch) continue;
+      const tracks = JSON.parse(tracksMatch[1]) as Array<{
+        baseUrl?: string;
+        languageCode?: string;
+      }>;
+      if (!Array.isArray(tracks) || tracks.length === 0) continue;
+
+      for (const tryLang of langsToTry) {
+        const track =
+          tracks.find((t) => (t.languageCode || '').toLowerCase().startsWith(tryLang)) ||
+          tracks[0];
+        if (!track?.baseUrl) continue;
+        const cleanBase = track.baseUrl.replace(/\\u0026/g, '&');
+        const capLang: Language = (track.languageCode || '').toLowerCase().startsWith('th')
+          ? 'th'
+          : 'en';
+
+        // Try direct fetch first (YouTube timedtext baseUrl sometimes allows GET), then via proxy
+        for (const capUrl of [
+          cleanBase,
+          `https://api.allorigins.win/raw?url=${encodeURIComponent(cleanBase)}`,
+        ]) {
+          try {
+            const capRes = await fetchWithTimeout(capUrl, 4500);
+            if (capRes.ok) {
+              const xml = await capRes.text();
+              if (xml.includes('<text')) {
+                const lines = parseTimedTextXml(xml, capLang);
+                if (lines.length > 0) {
+                  return { lines, detectedLang: capLang };
+                }
+              }
+            }
+          } catch {
+            // next
+          }
+        }
+      }
+    } catch {
+      // try next proxy
+    }
+  }
+
+  // Tier 2: Legacy timedtext endpoint fallback
   for (const tryLang of langsToTry) {
     const timedTextUrl = `https://video.google.com/timedtext?lang=${tryLang}&v=${videoId}`;
     const gateways = [
