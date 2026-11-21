@@ -263,23 +263,27 @@ export function CourtroomStage({
                 {isSpeaking ? (
                   <>
                     <StopCircle weight="fill" className="h-3.5 w-3.5" />
-                    {voiceMode === 'word' && activeWordText
-                      ? `กำลังอ่าน: "${activeWordText}"`
-                      : `กำลังอ่าน (${voiceMeta.badgeTh.split('·')[0].trim()})`}
+                    <span className="max-w-[210px] truncate">
+                      {voiceMode === 'word' && activeWordText
+                        ? `กำลังอ่าน: "${activeWordText}"`
+                        : `กำลังอ่าน (${voiceMeta.badgeTh.split('·')[0].trim()})`}
+                    </span>
                   </>
                 ) : (
                   <>
                     <SpeakerHigh weight="fill" className="h-3.5 w-3.5" />
-                    {autoplayBlocked
-                      ? 'กดเริ่มเสียงทีละคำ (F2)'
-                      : voiceMode === 'word' && activeWordText
-                      ? `อ่านคำ: "${activeWordText}" (F2)`
-                      : 'เล่นเสียงพากย์ (F2)'}
+                    <span className="max-w-[210px] truncate">
+                      {autoplayBlocked
+                        ? 'กดเริ่มเสียงทีละ 3-4 คำ (F2)'
+                        : voiceMode === 'word' && activeWordText
+                        ? `อ่านช่วง: "${activeWordText}" (F2)`
+                        : 'เล่นเสียงพากย์ (F2)'}
+                    </span>
                   </>
                 )}
               </button>
 
-              {/* Word-by-Word vs Full-Sentence mode switcher */}
+              {/* 3-4 Word Phrase vs Full-Sentence mode switcher */}
               <div className="inline-flex overflow-hidden rounded-lg border border-[#d4af37]/30 bg-black/45 text-[10px] font-bold">
                 <button
                   type="button"
@@ -290,7 +294,7 @@ export function CourtroomStage({
                       : 'text-[#cbb89d] hover:bg-white/10'
                   }`}
                 >
-                  ทีละคำ
+                  ทีละ 3-4 คำ
                 </button>
                 <button
                   type="button"

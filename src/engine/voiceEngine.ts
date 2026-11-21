@@ -207,12 +207,17 @@ class CourtVoiceEngine {
   }
 
   /**
-   * Return word-by-word segments for any line:
-   * - Uses exact neural WordBoundary timestamps for built-in cases when timings.json is loaded
-   * - For dynamic Thai/EN text: keeps space-delimited short words/names intact (e.g. "วินเซนต์" stays 1 whole word!)
-   *   and uses Intl.Segmenter word boundaries for long continuous Thai phrases.
+   * Return natural 3-4 word dictation phrase chunks for any line:
+   * - Uses exact neural WordBoundary timestamps for built-in cases (continuous smooth phrase slice!)
+   * - Breaks naturally at punctuation / audio pauses / 3-4 word rhythm without leaving 1-word orphans
+   * - Works identically for dynamic Wikipedia / Random / Custom passages!
    */
   public getWordSegments(lineId: string, text: string, lang: Language): SpokenWordSegment[] {
+    const rawUnits = this.getRawWordUnits(lineId, text, lang);
+    return this.groupIntoDictationPhrases(rawUnits, text, lang);
+  }
+
+  private getRawWordUnits(lineId: string, text: string, lang: Language): SpokenWordSegment[] {
     const timed = this.timingsMap?.[lineId];
     if (timed && timed.length > 0) {
       return timed.map((entry, idx) => ({
@@ -229,8 +234,6 @@ class CourtVoiceEngine {
     const segments: SpokenWordSegment[] = [];
 
     if (lang === 'th') {
-      // Group consecutive non-space tokens between spaces; if the whole chunk is <= 12 code points
-      // (e.g. names/loanwords like "เดวิด", "วินเซนต์", "เอกชัย"), keep it as ONE spoken word!
       let group: typeof tokens = [];
       const flushGroup = () => {
         if (group.length === 0) return;
@@ -278,6 +281,91 @@ class CourtVoiceEngine {
       });
     }
     return segments;
+  }
+
+  private groupIntoDictationPhrases(
+    units: SpokenWordSegment[],
+    fullText: string,
+    lang: Language
+  ): SpokenWordSegment[] {
+    if (units.length <= 4) {
+      if (units.length === 0) return [];
+      const cpArr = Array.from(fullText);
+      const first = units[0];
+      const last = units[units.length - 1];
+      return [
+        {
+          index: 0,
+          text: cpArr.slice(first.cpStart, last.cpEnd).join('').trim(),
+          cpStart: first.cpStart,
+          cpEnd: last.cpEnd,
+          startSec: first.startSec,
+          endSec: last.endSec,
+        },
+      ];
+    }
+
+    const cpArr = Array.from(fullText);
+    const phrases: SpokenWordSegment[] = [];
+    let bucket: SpokenWordSegment[] = [];
+
+    const flushBucket = () => {
+      if (bucket.length === 0) return;
+      const first = bucket[0];
+      const last = bucket[bucket.length - 1];
+      phrases.push({
+        index: phrases.length,
+        text: cpArr.slice(first.cpStart, last.cpEnd).join('').trim(),
+        cpStart: first.cpStart,
+        cpEnd: last.cpEnd,
+        startSec: first.startSec,
+        endSec: last.endSec,
+      });
+      bucket = [];
+    };
+
+    for (let i = 0; i < units.length; i++) {
+      const u = units[i];
+      const next = units[i + 1];
+      const remainingAfter = units.length - 1 - i;
+
+      bucket.push(u);
+
+      const count = bucket.length;
+      const phraseLen = u.cpEnd - bucket[0].cpStart;
+      const sliceText = cpArr.slice(u.cpStart, u.cpEnd).join('');
+
+      // Check natural speech boundaries
+      const endsWithHardPunct = /[.!?;:]$/.test(sliceText);
+      const endsWithComma = /[,]$/.test(sliceText);
+      const hasAudioPauseAfter =
+        next !== undefined &&
+        u.endSec !== undefined &&
+        next.startSec !== undefined &&
+        next.startSec - u.endSec >= 0.24;
+      const hasThaiSpacePauseAfter =
+        lang === 'th' &&
+        next !== undefined &&
+        next.cpStart > u.cpEnd &&
+        cpArr.slice(u.cpEnd, next.cpStart).join('').includes(' ');
+
+      const shouldBreak =
+        (count >= 2 && endsWithHardPunct) ||
+        (count >= 3 && (endsWithComma || hasAudioPauseAfter || hasThaiSpacePauseAfter)) ||
+        (count >= 3 && phraseLen >= (lang === 'th' ? 20 : 24)) ||
+        count >= 4;
+
+      if (shouldBreak) {
+        // Avoid leaving a lonely 1-word orphan at the very end of the sentence
+        if (remainingAfter === 1 && count <= 3) {
+          continue;
+        }
+        flushBucket();
+      }
+    }
+
+    flushBucket();
+    return phrases;
   }
 
   /**
