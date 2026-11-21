@@ -1,5 +1,5 @@
 import type { CaseDossier, Language, PassageLine, SpeakerRole } from '../types/game';
-import { normalizeTypableText } from './typingEngine';
+import { sanitizeTextForLanguage } from './typingEngine';
 
 export interface WikiSearchItem {
   title: string;
@@ -8,7 +8,8 @@ export interface WikiSearchItem {
 }
 
 /**
- * Split a long plain-text article into comfortable courtroom transcript lines (~90-175 chars).
+ * Split a long plain-text article into comfortable courtroom transcript sentences (~85-155 chars),
+ * strictly sanitized so ONLY characters typable on the target language keyboard remain!
  */
 export function splitIntoTranscriptLines(
   rawText: string,
@@ -16,29 +17,24 @@ export function splitIntoTranscriptLines(
   maxLines = 10,
   speakerName?: string
 ): PassageLine[] {
-  const cleaned = rawText
-    .replace(/\[\d+\]/g, '') // Remove Wikipedia footnote markers [1]
+  const rawParagraphs = rawText
+    .replace(/\[\d+\]/g, '')
     .replace(/\[citation needed\]/gi, '')
     .replace(/\[ต้องการอ้างอิง\]/g, '')
-    .replace(/\(\s*\)/g, '')
-    .trim();
-
-  const rawParagraphs = cleaned
     .split(/\n+/)
-    .map((p) => normalizeTypableText(p))
+    .map((p) => sanitizeTextForLanguage(p, lang))
     .filter((p) => p.length > 18);
 
   const sentences: string[] = [];
 
   for (const para of rawParagraphs) {
     if (lang === 'en') {
-      // Split on sentence boundaries
       const parts = para.match(/[^.!?]+[.!?]+(?:\s|$)|[^.!?]+$/g) || [para];
       let buf = '';
       for (const part of parts) {
         const p = part.trim();
         if (!p) continue;
-        if (buf.length > 0 && buf.length + p.length > 165) {
+        if (buf.length > 0 && buf.length + p.length > 155) {
           sentences.push(buf.trim());
           buf = p;
         } else {
@@ -47,15 +43,15 @@ export function splitIntoTranscriptLines(
       }
       if (buf.trim()) sentences.push(buf.trim());
     } else {
-      // Thai: split cleanly by spaces / clause boundaries to keep ~95-145 chars per line
-      if (para.length <= 145) {
+      // Thai: split cleanly by spaces / clause boundaries to keep ~90-140 chars per line
+      if (para.length <= 140) {
         sentences.push(para);
       } else {
         const tokens = para.split(' ');
         let buf = '';
         for (const tok of tokens) {
           if (!tok) continue;
-          if (buf.length > 0 && buf.length + tok.length > 130) {
+          if (buf.length > 0 && buf.length + tok.length > 125) {
             sentences.push(buf.trim());
             buf = tok;
           } else {
@@ -69,8 +65,8 @@ export function splitIntoTranscriptLines(
   }
 
   const finalLines = sentences
-    .map((s) => normalizeTypableText(s))
-    .filter((s) => s.length >= 12)
+    .map((s) => sanitizeTextForLanguage(s, lang))
+    .filter((s) => s.length >= 14)
     .slice(0, maxLines);
 
   const roles: SpeakerRole[] = ['witness', 'defense', 'prosecutor', 'judge'];
@@ -118,7 +114,7 @@ export async function searchWikipedia(query: string, lang: Language): Promise<Wi
 
 /**
  * Load a specific Wikipedia article (by URL or title) into a playable CaseDossier!
- * 100% zero-backend using Wikimedia CORS API.
+ * 100% zero-backend using Wikimedia CORS API + strict language character sanitizer.
  */
 export async function loadWikipediaCase(
   titleOrUrl: string,
@@ -157,7 +153,7 @@ export async function loadWikipediaCase(
   );
 
   if (lines.length === 0) {
-    throw new Error('บทความนี้สั้นเกินไปสำหรับนำมาฝึกพิมพ์ กรุณาลองบทความอื่น');
+    throw new Error('บทความนี้ไม่มีเนื้อหาภาษาที่พิมพ์ได้เพียงพอ กรุณาลองบทความอื่น');
   }
 
   const resolvedTitle = firstPage.title || title;
@@ -167,8 +163,8 @@ export async function loadWikipediaCase(
     title: resolvedTitle,
     subtitle:
       lang === 'th'
-        ? 'นำเข้าสดจากวิกิพีเดียภาษาไทย (ไม่ต้องใช้เซิร์ฟเวอร์)'
-        : 'Live English Wikipedia Dossier (with auto Thai translation & dictionary)',
+        ? 'นำเข้าสดจากวิกิพีเดียภาษาไทย (กรองเฉพาะอักษรไทยพิมพ์ได้ 100%)'
+        : 'Live English Wikipedia Dossier (sanitized QWERTY + auto Thai translation)',
     language: lang,
     sourceKind: 'wikipedia',
     difficulty: 'senior',
@@ -180,13 +176,14 @@ export async function loadWikipediaCase(
 
 /**
  * Fetch a genuine Random Wikipedia article in Thai or English (100% browser CORS).
+ * Fetches 12 candidates and ranks by clean sanitized length so Thai random Wiki ONLY contains
+ * rich, fluent, 100% pure-Thai typable paragraphs (zero Chinese/English/foreign glyphs!).
  */
 export async function loadRandomWikipediaCase(
   lang: Language,
   lineCount = 6
 ): Promise<CaseDossier> {
-  // Fetch a batch of 6 random articles and pick the richest one so we never land on a tiny stub!
-  const endpoint = `https://${lang}.wikipedia.org/w/api.php?action=query&generator=random&grnnamespace=0&grnlimit=6&prop=extracts&exintro=0&exchars=2200&explaintext=1&format=json&origin=*`;
+  const endpoint = `https://${lang}.wikipedia.org/w/api.php?action=query&generator=random&grnnamespace=0&grnlimit=12&prop=extracts&exintro=0&exchars=2600&explaintext=1&format=json&origin=*`;
   const res = await fetch(endpoint);
   if (!res.ok) throw new Error('ไม่สามารถสุ่มบทความจาก Wikipedia ได้ในขณะนี้');
   const data = await res.json();
@@ -196,36 +193,50 @@ export async function loadRandomWikipediaCase(
     extract?: string;
   }>;
 
-  const ranked = pages
-    .filter((p) => p.extract && p.extract.trim().length > 180)
-    .sort((a, b) => (b.extract?.length || 0) - (a.extract?.length || 0));
+  const candidates = pages
+    .filter((p) => p.extract && p.extract.trim().length > 220)
+    .filter((p) => {
+      // Skip disambiguation/list stubs
+      if (lang === 'th' && /อาจหมายถึง|รายชื่อ|แก้ความกำกวม/.test(p.title + ' ' + (p.extract || '').slice(0, 140))) {
+        return false;
+      }
+      if (lang === 'en' && /may refer to:|List of /i.test(p.title + ' ' + (p.extract || '').slice(0, 140))) {
+        return false;
+      }
+      return true;
+    })
+    .map((p) => {
+      const lines = splitIntoTranscriptLines(
+        p.extract || '',
+        lang,
+        lineCount,
+        lang === 'th' ? 'บันทึกสุ่มวิกิพีเดีย' : 'Random Archive Witness'
+      );
+      const totalLen = lines.reduce((acc, l) => acc + l.text.length, 0);
+      return { page: p, lines, totalLen };
+    })
+    .filter((c) => c.lines.length >= 2 && c.totalLen >= 160)
+    .sort((a, b) => b.totalLen - a.totalLen);
 
-  const best = ranked[0];
-  if (!best || !best.extract) {
+  const best = candidates[0];
+  if (!best) {
     throw new Error('สุ่มพบบทความที่สั้นเกินไป กรุณากดสุ่มอีกครั้ง');
   }
 
-  const lines = splitIntoTranscriptLines(
-    best.extract,
-    lang,
-    lineCount,
-    lang === 'th' ? 'บันทึกสุ่มวิกิพีเดีย' : 'Random Archive Witness'
-  );
-
   return {
-    id: `wiki-rand-${lang}-${best.pageid}-${Date.now()}`,
+    id: `wiki-rand-${lang}-${best.page.pageid}-${Date.now()}`,
     caseCode: `RAND-${lang.toUpperCase()}`,
-    title: best.title,
+    title: best.page.title,
     subtitle:
       lang === 'th'
-        ? 'สุ่มสดจากสารานุกรม Wikipedia ภาษาไทย'
+        ? 'สุ่มสดจากวิกิพีเดียภาษาไทย (คัดกรองเฉพาะภาษาไทย 100%)'
         : 'Live Random English Wikipedia — Practice Typing, Reading & Translation',
     language: lang,
     sourceKind: 'random',
     difficulty: 'senior',
     category: `สุ่มวิกิพีเดีย (${lang.toUpperCase()})`,
-    sourceUrl: `https://${lang}.wikipedia.org/wiki/${encodeURIComponent(best.title.replace(/ /g, '_'))}`,
-    lines,
+    sourceUrl: `https://${lang}.wikipedia.org/wiki/${encodeURIComponent(best.page.title.replace(/ /g, '_'))}`,
+    lines: best.lines,
   };
 }
 
@@ -301,7 +312,6 @@ function parseTimedTextXml(xml: string, lang: Language): PassageLine[] {
   const textNodes = Array.from(doc.querySelectorAll('text'));
   if (textNodes.length === 0) return [];
 
-  // Merge short 2-second caption fragments into natural readable ~95-140 char sentences
   const lines: PassageLine[] = [];
   let buf = '';
   let segStart = 0;
@@ -310,8 +320,9 @@ function parseTimedTextXml(xml: string, lang: Language): PassageLine[] {
   for (const node of textNodes) {
     const start = parseFloat(node.getAttribute('start') || '0');
     const dur = parseFloat(node.getAttribute('dur') || '3');
-    const content = normalizeTypableText(
-      decodeHtmlEntities(node.textContent || '').replace(/\[[^\]]+\]/g, '')
+    const content = sanitizeTextForLanguage(
+      decodeHtmlEntities(node.textContent || '').replace(/\[[^\]]+\]/g, ''),
+      lang
     );
     if (!content) continue;
 
@@ -320,7 +331,7 @@ function parseTimedTextXml(xml: string, lang: Language): PassageLine[] {
       segStart = start;
       segEnd = start + dur;
     } else if (buf.length + content.length <= 135 && start - segEnd < 4) {
-      buf = lang === 'th' ? `${buf} ${content}` : `${buf} ${content}`;
+      buf = `${buf} ${content}`;
       segEnd = start + dur;
     } else {
       lines.push({
@@ -329,7 +340,7 @@ function parseTimedTextXml(xml: string, lang: Language): PassageLine[] {
         speakerName: `Witness Feed (${formatTimestamp(segStart)})`,
         startSec: Math.floor(segStart),
         endSec: Math.ceil(segEnd),
-        text: normalizeTypableText(buf),
+        text: sanitizeTextForLanguage(buf, lang),
       });
       buf = content;
       segStart = start;
@@ -343,18 +354,12 @@ function parseTimedTextXml(xml: string, lang: Language): PassageLine[] {
       speakerName: `Witness Feed (${formatTimestamp(segStart)})`,
       startSec: Math.floor(segStart),
       endSec: Math.ceil(segEnd),
-      text: normalizeTypableText(buf),
+      text: sanitizeTextForLanguage(buf, lang),
     });
   }
-  return lines.slice(0, 30);
+  return lines.filter((l) => l.text.length >= 6).slice(0, 30);
 }
 
-/**
- * Multi-tier zero-backend YouTube caption fetcher.
- * Attempts CORS-friendly public gateways with fast timeout; if YouTube rate-limits
- * public proxies, gracefully informs UI so the user can paste the transcript / drop .SRT/.VTT
- * while the embedded YouTube player is ALREADY live and ready!
- */
 export async function tryAutoFetchYouTubeCaptions(
   videoId: string,
   lang: Language
@@ -372,7 +377,6 @@ export async function tryAutoFetchYouTubeCaptions(
   };
 
   for (const tryLang of langsToTry) {
-    // Attempt 1: Public timedtext via AllOrigins CORS gateway
     const timedTextUrl = `https://video.google.com/timedtext?lang=${tryLang}&v=${videoId}`;
     const gateways = [
       `https://api.allorigins.win/raw?url=${encodeURIComponent(timedTextUrl)}`,
@@ -416,13 +420,6 @@ function parseTimestampToSec(ts: string): number {
   return parts[0] || 0;
 }
 
-/**
- * Intelligent parser supporting:
- * 1) SRT subtitle files
- * 2) WebVTT (.vtt) files
- * 3) Direct copy-paste from YouTube's "Show transcript" panel (timestamps + text lines!)
- * 4) Plain text paragraphs
- */
 export function parseSubtitleOrTranscript(
   rawText: string,
   lang: Language,
@@ -431,7 +428,6 @@ export function parseSubtitleOrTranscript(
   const normalizedRaw = rawText.replace(/\r\n/g, '\n').trim();
   if (!normalizedRaw) return [];
 
-  // Case 1: SRT or VTT format (contains "-->")
   if (normalizedRaw.includes('-->')) {
     const blocks = normalizedRaw
       .replace(/^WEBVTT[^\n]*\n+/i, '')
@@ -447,7 +443,7 @@ export function parseSubtitleOrTranscript(
         .slice(timeIdx + 1)
         .join(' ')
         .replace(/<[^>]+>/g, '');
-      const clean = normalizeTypableText(body);
+      const clean = sanitizeTextForLanguage(body, lang);
       if (!clean) continue;
       rawCues.push({
         startSec: parseTimestampToSec(startStr),
@@ -457,16 +453,10 @@ export function parseSubtitleOrTranscript(
     }
 
     if (rawCues.length > 0) {
-      return mergeTimedCues(rawCues, speakerPrefix);
+      return mergeTimedCues(rawCues, lang, speakerPrefix);
     }
   }
 
-  // Case 2: YouTube "Show transcript" copy-paste format:
-  // e.g.
-  // 0:04
-  // Hello everyone, welcome back
-  // 0:09
-  // Today we are examining...
   const linesArr = normalizedRaw.split('\n').map((l) => l.trim()).filter(Boolean);
   const tsRegex = /^(\d{1,2}:)?\d{1,2}:\d{2}$/;
   const hasYtTimestamps = linesArr.filter((l) => tsRegex.test(l)).length >= 2;
@@ -478,7 +468,7 @@ export function parseSubtitleOrTranscript(
 
     const flush = (nextTs?: number) => {
       if (currentTs !== null && buf.length > 0) {
-        const text = normalizeTypableText(buf.join(' '));
+        const text = sanitizeTextForLanguage(buf.join(' '), lang);
         if (text) {
           rawCues.push({
             startSec: currentTs,
@@ -496,7 +486,6 @@ export function parseSubtitleOrTranscript(
         flush(sec);
         currentTs = sec;
       } else {
-        // Also handle inline "0:12 Some text here"
         const inline = line.match(/^((?:\d{1,2}:)?\d{1,2}:\d{2})\s+(.+)$/);
         if (inline) {
           const sec = parseTimestampToSec(inline[1]);
@@ -511,16 +500,16 @@ export function parseSubtitleOrTranscript(
     flush();
 
     if (rawCues.length > 0) {
-      return mergeTimedCues(rawCues, speakerPrefix);
+      return mergeTimedCues(rawCues, lang, speakerPrefix);
     }
   }
 
-  // Case 3: Plain text fallback
   return splitIntoTranscriptLines(normalizedRaw, lang, 24, speakerPrefix);
 }
 
 function mergeTimedCues(
   cues: Array<{ startSec: number; endSec: number; text: string }>,
+  lang: Language,
   speakerPrefix: string
 ): PassageLine[] {
   const merged: PassageLine[] = [];
@@ -543,7 +532,7 @@ function mergeTimedCues(
         speakerName: `${speakerPrefix} (${formatTimestamp(startSec)})`,
         startSec: Math.floor(startSec),
         endSec: Math.ceil(endSec),
-        text: normalizeTypableText(buf),
+        text: sanitizeTextForLanguage(buf, lang),
       });
       buf = cue.text;
       startSec = cue.startSec;
@@ -557,16 +546,13 @@ function mergeTimedCues(
       speakerName: `${speakerPrefix} (${formatTimestamp(startSec)})`,
       startSec: Math.floor(startSec),
       endSec: Math.ceil(endSec),
-      text: normalizeTypableText(buf),
+      text: sanitizeTextForLanguage(buf, lang),
     });
   }
 
-  return merged.slice(0, 40);
+  return merged.filter((m) => m.text.length >= 6).slice(0, 40);
 }
 
-/**
- * Simple automatic language heuristic (detects Thai script ratio).
- */
 export function detectTextLanguage(text: string): Language {
   const thaiChars = (text.match(/[\u0E00-\u0E7F]/g) || []).length;
   const latinChars = (text.match(/[a-zA-Z]/g) || []).length;

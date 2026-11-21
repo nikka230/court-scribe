@@ -1,4 +1,5 @@
 import type { SavedVocabItem, SessionResult, UserProfile, UserSettings } from '../types/game';
+import { DEFAULT_GOOGLE_SHEET_URL } from './sheetsService';
 
 const PROFILE_KEY = 'court_scribe_profile_v1';
 const SETTINGS_KEY = 'court_scribe_settings_v1';
@@ -29,11 +30,14 @@ export function getRankForXp(xp: number): RankInfo {
 
 export function getDefaultProfile(): UserProfile {
   return {
+    playerName: 'เสมียนนิรนาม',
+    googleSheetUrl: DEFAULT_GOOGLE_SHEET_URL,
     xp: 0,
     totalCharsTyped: 0,
     totalSessions: 0,
     bestWpmTh: 0,
     bestWpmEn: 0,
+    caseBestWpm: {},
     streakDays: 1,
     lastPlayedDate: new Date().toISOString().slice(0, 10),
     keyStatsTh: {},
@@ -72,7 +76,9 @@ export function getDefaultSettings(): UserSettings {
     showFingerHands: true,
     autoLayoutMapping: false,
     translationMode: 'visible',
-    autoReadAloudEn: false,
+    autoVoiceEnabled: true,
+    voiceRate: 1.0,
+    autoReadAloudEn: true,
     ttsRate: 0.95,
     gameMode: 'trial',
     reducedMotion: false,
@@ -85,7 +91,12 @@ export function loadProfile(): UserProfile {
     const raw = localStorage.getItem(PROFILE_KEY);
     if (!raw) return getDefaultProfile();
     const parsed = JSON.parse(raw) as Partial<UserProfile>;
-    return { ...getDefaultProfile(), ...parsed };
+    return {
+      ...getDefaultProfile(),
+      ...parsed,
+      googleSheetUrl: parsed.googleSheetUrl || DEFAULT_GOOGLE_SHEET_URL,
+      caseBestWpm: parsed.caseBestWpm || {},
+    };
   } catch {
     return getDefaultProfile();
   }
@@ -121,7 +132,7 @@ export function recordSessionToProfile(
   profile: UserProfile,
   result: SessionResult,
   sessionKeyStats: Record<string, { hits: number; misses: number }>
-): UserProfile {
+): { updated: UserProfile; isNewPersonalBest: boolean; previousBestWpm: number } {
   const today = new Date().toISOString().slice(0, 10);
   let streakDays = profile.streakDays || 1;
   if (profile.lastPlayedDate && profile.lastPlayedDate !== today) {
@@ -129,6 +140,16 @@ export function recordSessionToProfile(
     const diffDays = Math.round(diffMs / 86400000);
     streakDays = diffDays === 1 ? streakDays + 1 : 1;
   }
+
+  const prevLangBest = result.language === 'th' ? profile.bestWpmTh : profile.bestWpmEn;
+  const prevCaseBest = profile.caseBestWpm?.[result.caseId] || 0;
+  const previousBestWpm = prevCaseBest > 0 ? prevCaseBest : prevLangBest;
+  const isNewPersonalBest = result.wpm > 0 && (result.wpm > prevCaseBest || result.wpm > prevLangBest);
+
+  const nextCaseBest = {
+    ...(profile.caseBestWpm || {}),
+    [result.caseId]: Math.max(prevCaseBest, result.wpm),
+  };
 
   const targetKeyMap = result.language === 'th' ? { ...profile.keyStatsTh } : { ...profile.keyStatsEn };
   Object.entries(sessionKeyStats).forEach(([k, v]) => {
@@ -141,6 +162,12 @@ export function recordSessionToProfile(
     };
   });
 
+  const enrichedResult: SessionResult = {
+    ...result,
+    isNewPersonalBest,
+    previousBestWpm,
+  };
+
   const updated: UserProfile = {
     ...profile,
     xp: profile.xp + result.xpEarned,
@@ -150,15 +177,16 @@ export function recordSessionToProfile(
       result.language === 'th' ? Math.max(profile.bestWpmTh, result.wpm) : profile.bestWpmTh,
     bestWpmEn:
       result.language === 'en' ? Math.max(profile.bestWpmEn, result.wpm) : profile.bestWpmEn,
+    caseBestWpm: nextCaseBest,
     streakDays,
     lastPlayedDate: today,
     keyStatsTh: result.language === 'th' ? targetKeyMap : profile.keyStatsTh,
     keyStatsEn: result.language === 'en' ? targetKeyMap : profile.keyStatsEn,
-    history: [result, ...profile.history].slice(0, 40),
+    history: [enrichedResult, ...profile.history].slice(0, 50),
   };
 
   saveProfile(updated);
-  return updated;
+  return { updated, isNewPersonalBest, previousBestWpm };
 }
 
 export function upsertVocabInProfile(

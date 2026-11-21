@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   SpeakerHigh,
   Translate,
@@ -24,7 +24,10 @@ import {
   isThaiCombiningMark,
   lookupKeyForChar,
 } from '../data/keyboardLayouts';
-import { segmentLineIntoClusters } from '../engine/typingEngine';
+import {
+  buildLockedVisualRows,
+  type GraphemeCluster,
+} from '../engine/typingEngine';
 import {
   lookupEnglishWord,
   speakText,
@@ -35,7 +38,7 @@ import sealImg from '../assets/court-seal.jpg';
 interface Props {
   dossier: CaseDossier;
   currentLineIdx: number;
-  charIndex: number; // typed code-point index within currentLine.text
+  charIndex: number;
   typedChars: string[];
   errorFlash: boolean;
   wrongLayoutWarning: boolean;
@@ -51,6 +54,8 @@ interface Props {
   peekActive: boolean;
   onPeekToggle: (v: boolean) => void;
   onUpdateLineTranslation: (lineId: string, th: string) => void;
+  onSeamSpacesChange: (seams: Set<number>) => void;
+  onPlayVoice: () => void;
 }
 
 export function TranscriptPaper({
@@ -72,10 +77,16 @@ export function TranscriptPaper({
   peekActive,
   onPeekToggle,
   onUpdateLineTranslation,
+  onSeamSpacesChange,
+  onPlayVoice,
 }: Props) {
   const [selectedWord, setSelectedWord] = useState<VocabHint | null>(null);
   const [loadingWord, setLoadingWord] = useState(false);
   const [loadingTrans, setLoadingTrans] = useState(false);
+
+  const lineContainerRef = useRef<HTMLDivElement | null>(null);
+  const [containerWidth, setContainerWidth] = useState(960);
+  const [computedFont, setComputedFont] = useState('500 24px Sarabun, sans-serif');
 
   const currentLine: PassageLine | undefined = dossier.lines[currentLineIdx];
   const prevLine: PassageLine | undefined =
@@ -84,6 +95,30 @@ export function TranscriptPaper({
     currentLineIdx + 1 < dossier.lines.length ? dossier.lines[currentLineIdx + 1] : undefined;
 
   const lang = dossier.language;
+
+  // Measure actual container width & exact computed font so word-atomic visual rows NEVER split words or wrap unevenly
+  useLayoutEffect(() => {
+    const el = lineContainerRef.current;
+    if (!el) return;
+
+    const measure = () => {
+      const w = el.clientWidth;
+      if (w > 120) setContainerWidth(w);
+      const cs = window.getComputedStyle(el);
+      const f = `${cs.fontWeight || '500'} ${cs.fontSize || '24px'} ${cs.fontFamily || 'Sarabun, sans-serif'}`;
+      setComputedFont(f);
+    };
+
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+
+    if (document.fonts && document.fonts.ready) {
+      document.fonts.ready.then(measure).catch(() => {});
+    }
+
+    return () => ro.disconnect();
+  }, [lang, fontSize]);
 
   // Auto-translate English line via zero-backend translation service if not pre-translated
   useEffect(() => {
@@ -104,18 +139,31 @@ export function TranscriptPaper({
     };
   }, [lang, currentLine?.id, currentLine?.text, currentLine?.translationTh, onUpdateLineTranslation]);
 
-  // Grapheme clusters for safe Thai & English rendering
-  const clusters = useMemo(
-    () => (currentLine ? segmentLineIntoClusters(currentLine.text, lang) : []),
-    [currentLine, lang]
-  );
+  // Compute LOCKED visual rows (whole words only, ZERO leading/trailing spacebars!)
+  const lockedLayout = useMemo(() => {
+    if (!currentLine) return { rows: [], seamSpaceIndices: new Set<number>() };
+    return buildLockedVisualRows(currentLine.text, lang, containerWidth, computedFont);
+  }, [currentLine, lang, containerWidth, computedFont]);
 
-  // Next character keystroke guidance
+  // Report seam space indices to App.tsx so typing flows smoothly across locked rows without trailing/leading spaces
+  useEffect(() => {
+    onSeamSpacesChange(lockedLayout.seamSpaceIndices);
+  }, [lockedLayout.seamSpaceIndices, onSeamSpacesChange]);
+
   const charsArray = useMemo(
     () => (currentLine ? Array.from(currentLine.text) : []),
     [currentLine]
   );
-  const nextChar = charsArray[charIndex] ?? '';
+
+  // Determine the next non-seam typable character
+  let effectiveNextIdx = charIndex;
+  while (
+    effectiveNextIdx < charsArray.length &&
+    lockedLayout.seamSpaceIndices.has(effectiveNextIdx)
+  ) {
+    effectiveNextIdx += 1;
+  }
+  const nextChar = charsArray[effectiveNextIdx] ?? '';
   const nextKeyInfo = useMemo(
     () => (nextChar ? lookupKeyForChar(nextChar, lang) : null),
     [nextChar, lang]
@@ -148,24 +196,106 @@ export function TranscriptPaper({
   };
 
   const fontSizeClass = {
-    md: lang === 'th' ? 'text-xl leading-[2.05]' : 'text-lg leading-[1.9]',
-    lg: lang === 'th' ? 'text-2xl sm:text-[27px] leading-[2.05]' : 'text-xl sm:text-[23px] leading-[1.85]',
-    xl: lang === 'th' ? 'text-3xl sm:text-[32px] leading-[2.0]' : 'text-2xl sm:text-[27px] leading-[1.85]',
+    md: lang === 'th' ? 'text-xl leading-[1.9]' : 'text-lg leading-[1.8]',
+    lg: lang === 'th' ? 'text-2xl sm:text-[26px] leading-[1.9]' : 'text-xl sm:text-[22px] leading-[1.8]',
+    xl: lang === 'th' ? 'text-3xl sm:text-[31px] leading-[1.85]' : 'text-2xl sm:text-[26px] leading-[1.8]',
   }[fontSize];
 
   const showTranslation =
     translationMode === 'visible' || (translationMode === 'peek' && peekActive);
 
-  // Track cumulative code-point index across grapheme clusters accurately
-  const clusterSpans = useMemo(() => {
-    let cpCursor = 0;
-    return clusters.map((c) => {
-      const cpStart = cpCursor;
-      const cpEnd = cpCursor + c.chars.length;
-      cpCursor = cpEnd;
-      return { ...c, cpStart, cpEnd };
-    });
-  }, [clusters]);
+  const renderCluster = (c: GraphemeCluster) => {
+    const isDone = charIndex >= c.cpEnd;
+    const isActive = charIndex >= c.cpStart && charIndex < c.cpEnd;
+    const isPartial = isActive && charIndex > c.cpStart;
+
+    if (isDone) {
+      const typedSlice = typedChars.slice(c.cpStart, c.cpEnd);
+      const isClusterCorrect =
+        typedSlice.length === c.chars.length &&
+        typedSlice.every((ch, i) => ch === c.chars[i]);
+
+      if (isClusterCorrect) {
+        return (
+          <span key={c.cpStart} className="text-[#164f36] transition-colors duration-75">
+            {c.cluster === ' ' ? '\u00A0' : c.cluster}
+          </span>
+        );
+      }
+
+      const rawTyped = typedSlice.join('');
+      const isMistypedSpace = rawTyped === ' ';
+      const displayWrong = isMistypedSpace
+        ? '\u00A0'
+        : isThaiCombiningMark(typedSlice[0] || '')
+        ? `◌${rawTyped}`
+        : rawTyped;
+
+      return (
+        <span
+          key={c.cpStart}
+          title={`พิมพ์ "${isMistypedSpace ? 'Space' : rawTyped}" (ที่ถูกต้องคือ "${
+            c.cluster === ' ' ? 'Space' : c.cluster
+          }")`}
+          className={`inline-block rounded-sm font-semibold text-[#c91c1c] underline decoration-[#d94141] decoration-2 underline-offset-4 transition-colors duration-75 ${
+            isMistypedSpace
+              ? 'mx-0.5 min-w-[0.65em] bg-[#d94141]/30'
+              : 'bg-[#d94141]/14 px-[1px]'
+          }`}
+        >
+          {displayWrong}
+        </span>
+      );
+    }
+
+    if (isActive) {
+      if (isPartial) {
+        const typedPrefix = typedChars.slice(c.cpStart, charIndex);
+        const prefixHasError = typedPrefix.some((ch, i) => ch !== c.chars[i]);
+        const remainingExpected = c.chars.slice(charIndex - c.cpStart);
+        const combined = [...typedPrefix, ...remainingExpected].join('');
+        const displayPartial = isThaiCombiningMark(typedPrefix[0] || '')
+          ? `◌${combined}`
+          : combined;
+
+        return (
+          <span
+            key={c.cpStart}
+            className={`relative inline-block rounded px-0.5 transition-all duration-75 ${
+              prefixHasError
+                ? 'bg-[#d94141]/25 text-[#a81515] ring-2 ring-[#d94141]'
+                : 'bg-[#e39d2b] text-[#1a1106] ring-2 ring-[#b8710b]'
+            }`}
+          >
+            {displayPartial}
+            <span
+              aria-hidden="true"
+              className="animate-caret absolute right-0 -bottom-0.5 left-0 h-[3px] rounded-full bg-[#7c1d1d]"
+            />
+          </span>
+        );
+      }
+
+      return (
+        <span
+          key={c.cpStart}
+          className="relative inline-block rounded bg-[#d4af37] px-0.5 text-[#140e07] shadow-[0_2px_10px_rgba(184,134,11,0.45)] transition-all duration-75"
+        >
+          {c.cluster === ' ' ? '\u00A0' : c.cluster}
+          <span
+            aria-hidden="true"
+            className="animate-caret absolute right-0 -bottom-0.5 left-0 h-[3px] rounded-full bg-[#7c1d1d]"
+          />
+        </span>
+      );
+    }
+
+    return (
+      <span key={c.cpStart} className="text-[#2c2116]/72">
+        {c.cluster === ' ' ? '\u00A0' : c.cluster}
+      </span>
+    );
+  };
 
   return (
     <div
@@ -174,7 +304,6 @@ export function TranscriptPaper({
         errorFlash ? 'ring-2 ring-[#d94141]' : ''
       }`}
     >
-      {/* Subtle watermark court seal in top-right parchment corner */}
       <img
         src={sealImg}
         alt=""
@@ -192,7 +321,7 @@ export function TranscriptPaper({
           <span>บันทึกถ้อยคำฉบับทางการ</span>
         </div>
 
-        {/* Next Keystroke Micro-Callout (super helpful for Thai combining marks & Shift!) */}
+        {/* Next Keystroke Micro-Callout */}
         {nextChar && nextKeyInfo && (
           <div className="flex items-center gap-2 rounded-full border border-[#a88321]/50 bg-[#fff8e6] px-3 py-0.5 text-[12px] font-semibold text-[#2d2011] shadow-sm">
             <span className="text-[#7d623b]">ปุ่มถัดไป:</span>
@@ -247,7 +376,7 @@ export function TranscriptPaper({
 
       {/* Main Ruled Transcript Lines */}
       <div className="relative z-10 space-y-3 py-5 pr-5 pl-14 sm:pr-7">
-        {/* Previous completed line (faded ink) */}
+        {/* Previous completed line */}
         {prevLine && (
           <div className="flex items-baseline gap-3 opacity-55">
             <span className="font-mono-num -ml-10 w-6 shrink-0 text-right text-[11px] font-semibold text-[#8c7456]">
@@ -263,113 +392,34 @@ export function TranscriptPaper({
           </div>
         )}
 
-        {/* Active Typing Line */}
+        {/* Active Typing Sentence — LOCKED Word-Atomic Visual Rows (ZERO broken words, ZERO leading/trailing spacebar!) */}
         {currentLine && (
-          <div className="relative flex items-baseline gap-3">
-            <span className="font-mono-num -ml-10 w-6 shrink-0 text-right text-xs font-bold text-[#9e2b2b]">
+          <div className="relative flex items-start gap-3">
+            <span className="font-mono-num -ml-10 mt-1.5 w-6 shrink-0 text-right text-xs font-bold text-[#9e2b2b]">
               {String(currentLineIdx + 1).padStart(2, '0')}
             </span>
 
             <div
-              className={`min-h-[3.5rem] flex-1 break-words tracking-normal select-none ${fontSizeClass} ${
+              ref={lineContainerRef}
+              className={`min-h-[3.5rem] flex-1 space-y-1.5 overflow-hidden select-none ${fontSizeClass} ${
                 lang === 'th' ? 'font-transcript-th font-medium' : 'font-transcript-en font-medium'
               }`}
             >
-              {clusterSpans.map((c) => {
-                const isDone = charIndex >= c.cpEnd;
-                const isActive = charIndex >= c.cpStart && charIndex < c.cpEnd;
-                const isPartial = isActive && charIndex > c.cpStart;
-
-                if (isDone) {
-                  const typedSlice = typedChars.slice(c.cpStart, c.cpEnd);
-                  const isClusterCorrect =
-                    typedSlice.length === c.chars.length &&
-                    typedSlice.every((ch, i) => ch === c.chars[i]);
-
-                  if (isClusterCorrect) {
-                    return (
-                      <span
-                        key={c.cpStart}
-                        className="text-[#164f36] transition-colors duration-75"
-                      >
-                        {c.cluster}
-                      </span>
-                    );
-                  }
-
-                  const rawTyped = typedSlice.join('');
-                  const isMistypedSpace = rawTyped === ' ';
-                  const displayWrong = isMistypedSpace
-                    ? '\u00A0'
-                    : isThaiCombiningMark(typedSlice[0] || '')
-                    ? `◌${rawTyped}`
-                    : rawTyped;
-
-                  return (
+              {lockedLayout.rows.map((rowTokens, rIdx) => (
+                <div
+                  key={rIdx}
+                  className="flex flex-nowrap items-baseline whitespace-nowrap"
+                >
+                  {rowTokens.map((tok) => (
                     <span
-                      key={c.cpStart}
-                      title={`พิมพ์ "${isMistypedSpace ? 'Space' : rawTyped}" (ที่ถูกต้องคือ "${
-                        c.cluster === ' ' ? 'Space' : c.cluster
-                      }")`}
-                      className={`inline-block rounded-sm font-semibold text-[#c91c1c] underline decoration-[#d94141] decoration-2 underline-offset-4 transition-colors duration-75 ${
-                        isMistypedSpace
-                          ? 'mx-0.5 min-w-[0.65em] bg-[#d94141]/30'
-                          : 'bg-[#d94141]/14 px-[1px]'
-                      }`}
+                      key={tok.cpStart}
+                      className="inline-flex flex-nowrap items-baseline whitespace-nowrap"
                     >
-                      {displayWrong}
+                      {tok.clusters.map(renderCluster)}
                     </span>
-                  );
-                }
-
-                if (isActive) {
-                  if (isPartial) {
-                    const typedPrefix = typedChars.slice(c.cpStart, charIndex);
-                    const prefixHasError = typedPrefix.some((ch, i) => ch !== c.chars[i]);
-                    const remainingExpected = c.chars.slice(charIndex - c.cpStart);
-                    const combined = [...typedPrefix, ...remainingExpected].join('');
-                    const displayPartial = isThaiCombiningMark(typedPrefix[0] || '')
-                      ? `◌${combined}`
-                      : combined;
-
-                    return (
-                      <span
-                        key={c.cpStart}
-                        className={`relative inline-block rounded px-0.5 transition-all duration-75 ${
-                          prefixHasError
-                            ? 'bg-[#d94141]/25 text-[#a81515] ring-2 ring-[#d94141]'
-                            : 'bg-[#e39d2b] text-[#1a1106] ring-2 ring-[#b8710b]'
-                        }`}
-                      >
-                        {displayPartial}
-                        <span
-                          aria-hidden="true"
-                          className="animate-caret absolute right-0 -bottom-0.5 left-0 h-[3px] rounded-full bg-[#7c1d1d]"
-                        />
-                      </span>
-                    );
-                  }
-
-                  return (
-                    <span
-                      key={c.cpStart}
-                      className="relative inline-block rounded bg-[#d4af37] px-0.5 text-[#140e07] shadow-[0_2px_10px_rgba(184,134,11,0.45)] transition-all duration-75"
-                    >
-                      {c.cluster === ' ' ? '\u00A0' : c.cluster}
-                      <span
-                        aria-hidden="true"
-                        className="animate-caret absolute right-0 -bottom-0.5 left-0 h-[3px] rounded-full bg-[#7c1d1d]"
-                      />
-                    </span>
-                  );
-                }
-
-                return (
-                  <span key={c.cpStart} className="text-[#2c2116]/72">
-                    {c.cluster}
-                  </span>
-                );
-              })}
+                  ))}
+                </div>
+              ))}
             </div>
           </div>
         )}
@@ -404,7 +454,6 @@ export function TranscriptPaper({
                 ฝึกอ่าน-ฝึกแปล (EN → TH)
               </span>
 
-              {/* Mode toggle buttons */}
               <div className="inline-flex overflow-hidden rounded-lg border border-[#b39869] bg-[#f7efde] text-[11px] font-semibold">
                 {(
                   [
@@ -429,7 +478,6 @@ export function TranscriptPaper({
               </div>
             </div>
 
-            {/* Read Aloud Audio Pronunciation Button */}
             <div className="flex items-center gap-1.5">
               {translationMode === 'peek' && (
                 <button
@@ -446,9 +494,9 @@ export function TranscriptPaper({
               )}
               <button
                 type="button"
-                onClick={() => speakText(currentLine.text, 'en', ttsRate)}
+                onClick={onPlayVoice}
                 className="inline-flex items-center gap-1.5 rounded-lg border border-[#3a6ea5]/45 bg-[#eef5fc] px-2.5 py-1 text-xs font-semibold text-[#1e4670] transition hover:bg-[#dcebfa] cursor-pointer"
-                title="ฟังเสียงอ่านภาษาอังกฤษประโยคนี้"
+                title="ฟังเสียงตัวละครอ่านภาษาอังกฤษประโยคนี้"
               >
                 <SpeakerHigh weight="duotone" className="h-4 w-4" />
                 ฟังเสียงอ่าน
@@ -456,7 +504,6 @@ export function TranscriptPaper({
             </div>
           </div>
 
-          {/* Thai Translation Box */}
           <div className="mt-2.5 rounded-xl border border-[#cbb487] bg-[#fcf7eb]/90 px-3.5 py-2.5 text-sm text-[#2c2014]">
             {translationMode === 'blind' ? (
               <span className="italic text-[#7a674d]">
@@ -487,7 +534,6 @@ export function TranscriptPaper({
             )}
           </div>
 
-          {/* Clickable Key Vocabulary Chips (instant dictionary inspector) */}
           {!Array.isArray(activeVocabChips) && (
             <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
               <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#665136]">
@@ -518,7 +564,6 @@ export function TranscriptPaper({
             </div>
           )}
 
-          {/* Selected Word Evidence Popover Card */}
           {selectedWord && (
             <div className="mt-2.5 flex flex-wrap items-start justify-between gap-3 rounded-xl border border-[#d4af37] bg-[#1a130e] p-3.5 text-[#f5efe6] shadow-xl">
               <div className="min-w-0 flex-1">
@@ -536,7 +581,7 @@ export function TranscriptPaper({
                   )}
                   <button
                     type="button"
-                    onClick={() => speakText(selectedWord.word, 'en', 0.88)}
+                    onClick={() => speakText(selectedWord.word, 'en', Math.min(1, ttsRate))}
                     className="inline-flex items-center gap-1 rounded bg-white/10 px-2 py-0.5 text-[11px] text-[#f5efe6] hover:bg-white/20 cursor-pointer"
                   >
                     <SpeakerHigh weight="fill" className="h-3 w-3 text-[#f2d583]" />

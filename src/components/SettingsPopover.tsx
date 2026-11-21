@@ -6,7 +6,7 @@ import {
   Gavel,
   Sparkle,
   TextAa,
-  Translate,
+  Waveform,
 } from '@phosphor-icons/react';
 import type { SoundProfile, UserSettings } from '../types/game';
 
@@ -37,7 +37,7 @@ export function SettingsModal({ open, onClose, settings, onChange }: Props) {
             <h2 className="font-display text-lg font-bold tracking-wider text-[#f2d583]">
               CHAMBER SETTINGS · ตั้งค่าเกม
             </h2>
-            <p className="text-xs text-[#bba88e]">ปรับแต่งเสียงพิมพ์ดีด แป้นพิมพ์ และโหมดฝึกอ่านแปล</p>
+            <p className="text-xs text-[#bba88e]">ปรับแต่งเสียงพากย์ตัวละคร เสียงพิมพ์ดีด และแป้นพิมพ์</p>
           </div>
           <button
             type="button"
@@ -50,6 +50,42 @@ export function SettingsModal({ open, onClose, settings, onChange }: Props) {
         </div>
 
         <div className="mt-4 space-y-4 text-sm">
+          {/* Character Voice Settings */}
+          <div className="space-y-3 rounded-xl border border-[#d4af37]/30 bg-black/35 p-3.5">
+            <div className="flex items-center gap-2 text-xs font-bold text-[#f2d583]">
+              <Waveform weight="duotone" className="h-4 w-4" />
+              เสียงพากย์ตัวละครศาล (ผู้พิพากษา / อัยการ / ทนาย / พยาน)
+            </div>
+
+            <ToggleRow
+              icon={<SpeakerHigh className="h-4 w-4 text-[#f2d583]" />}
+              label="เล่นเสียงตัวละครอัตโนมัติทุกประโยค"
+              desc="เปิดเสียงพากย์ตรงตามคาแรคเตอร์ทั้งไทยและอังกฤษให้พิมพ์ตามเสียงได้ทันที (กด F2 เล่นซ้ำ)"
+              checked={settings.autoVoiceEnabled}
+              onToggle={(v) => onChange({ autoVoiceEnabled: v })}
+            />
+
+            <div className="flex items-center justify-between pt-1">
+              <span className="text-xs text-[#d7c6ae]">ความเร็วเสียงพากย์ตัวละคร</span>
+              <div className="inline-flex overflow-hidden rounded-lg border border-white/15 bg-black/40 text-xs">
+                {[0.75, 0.85, 1.0, 1.15].map((r) => (
+                  <button
+                    key={r}
+                    type="button"
+                    onClick={() => onChange({ voiceRate: r, ttsRate: r })}
+                    className={`px-2.5 py-1 font-semibold cursor-pointer ${
+                      Math.abs(settings.voiceRate - r) < 0.03
+                        ? 'bg-[#d4af37] text-[#140e07]'
+                        : 'text-[#cbb89d] hover:bg-white/10'
+                    }`}
+                  >
+                    {r}x
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
           {/* Game Mode */}
           <div className="rounded-xl border border-white/10 bg-black/30 p-3.5">
             <div className="flex items-center gap-2 text-xs font-bold text-[#f2d583]">
@@ -89,7 +125,7 @@ export function SettingsModal({ open, onClose, settings, onChange }: Props) {
             <div className="flex items-center justify-between">
               <span className="inline-flex items-center gap-2 text-xs font-bold text-[#f2d583]">
                 <SpeakerHigh weight="duotone" className="h-4 w-4" />
-                เสียงเอฟเฟกต์พิมพ์ดีด &amp; ค้อนศาล
+                เสียงเอฟเฟกต์พิมพ์ดีด &amp; ระดับเสียงรวม
               </span>
               <span className="font-mono-num text-xs text-[#cbb89d]">
                 {Math.round(settings.volume * 100)}%
@@ -101,7 +137,7 @@ export function SettingsModal({ open, onClose, settings, onChange }: Props) {
                 [
                   ['brass-typewriter', 'เครื่องพิมพ์ดีด'],
                   ['mechanical-thock', 'คีย์บอร์ด Thock'],
-                  ['silent', 'ปิดเสียง'],
+                  ['silent', 'ปิดเสียงพิมพ์'],
                 ] as Array<[SoundProfile, string]>
               ).map(([id, label]) => (
                 <button
@@ -161,21 +197,8 @@ export function SettingsModal({ open, onClose, settings, onChange }: Props) {
             />
           </div>
 
-          {/* English Reading & Font Size */}
+          {/* Font Size & Motion */}
           <div className="space-y-3 rounded-xl border border-white/10 bg-black/30 p-3.5">
-            <div className="flex items-center gap-2 text-xs font-bold text-[#f2d583]">
-              <Translate weight="duotone" className="h-4 w-4" />
-              ฝึกอ่าน-ฟังภาษาอังกฤษ &amp; ขนาดตัวอักษร
-            </div>
-
-            <ToggleRow
-              icon={<SpeakerHigh className="h-4 w-4 text-[#8cbcf2]" />}
-              label="อ่านออกเสียงประโยคอังกฤษอัตโนมัติทุกบรรทัด"
-              desc="ช่วยฝึกฟัง Shadowing ควบคู่กับการพิมพ์และแปลความหมาย"
-              checked={settings.autoReadAloudEn}
-              onToggle={(v) => onChange({ autoReadAloudEn: v })}
-            />
-
             <div className="flex items-center justify-between pt-1">
               <span className="inline-flex items-center gap-1.5 text-xs text-[#d7c6ae]">
                 <TextAa className="h-4 w-4 text-[#f2d583]" />

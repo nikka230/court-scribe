@@ -10,14 +10,33 @@ import {
   BookmarkSimple,
   Check,
   Shuffle,
+  Sword,
+  Copy,
+  Trophy,
+  CloudCheck,
+  Table,
+  ShareNetwork,
 } from '@phosphor-icons/react';
-import type { SessionResult, VocabHint } from '../types/game';
+import type {
+  ActiveChallenge,
+  CaseDossier,
+  SessionResult,
+  VocabHint,
+} from '../types/game';
 import { OFFLINE_DICTIONARY } from '../data/dictionary';
 import { speakText } from '../engine/translationService';
+import { buildChallengeUrl } from '../engine/challengeService';
 import sealImg from '../assets/court-seal.jpg';
 
 interface Props {
   result: SessionResult | null;
+  dossier: CaseDossier;
+  playerName: string;
+  onChangePlayerName: (name: string) => void;
+  googleSheetUrl: string;
+  sheetSyncStatus: 'idle' | 'syncing' | 'synced' | 'error';
+  activeChallenge: ActiveChallenge | null;
+  onOpenGoogleSheets: () => void;
   onReplay: () => void;
   onOpenSources: () => void;
   onStartTargetedDrill: (weakChars: string[]) => void;
@@ -58,6 +77,13 @@ const GRADE_META: Record<
 
 export function VerdictModal({
   result,
+  dossier,
+  playerName,
+  onChangePlayerName,
+  googleSheetUrl,
+  sheetSyncStatus,
+  activeChallenge,
+  onOpenGoogleSheets,
   onReplay,
   onOpenSources,
   onStartTargetedDrill,
@@ -66,12 +92,15 @@ export function VerdictModal({
   isSavedWord,
 }: Props) {
   const [quizAnswers, setQuizAnswers] = useState<Record<string, string>>({});
+  const [challengeCopied, setChallengeCopied] = useState<'none' | 'url' | 'invite'>('none');
+  const [generatedUrl, setGeneratedUrl] = useState<string>('');
 
   useEffect(() => {
     setQuizAnswers({});
+    setChallengeCopied('none');
+    setGeneratedUrl('');
   }, [result?.id]);
 
-  // Build interactive English->Thai mini quiz from session vocabulary
   const quizQuestions = useMemo(() => {
     if (!result || result.language !== 'en' || result.vocabFromSession.length === 0) return [];
     const distractorPool = Object.values(OFFLINE_DICTIONARY).map((v) => v.th);
@@ -91,6 +120,30 @@ export function VerdictModal({
 
   if (!result) return null;
   const grade = GRADE_META[result.grade];
+
+  const handleCopyChallenge = async (mode: 'url' | 'invite') => {
+    const url = await buildChallengeUrl(dossier, result, playerName, googleSheetUrl);
+    setGeneratedUrl(url);
+    const textToCopy =
+      mode === 'url'
+        ? url
+        : `⚖️ คำท้าดวลพิมพ์สัมผัส Court Scribe จาก "${playerName || 'เสมียนผู้ท้าชิง'}"!\n📜 สำนวน: ${dossier.title}\n⚡ สถิติที่ต้องทำลาย: ${result.wpm} WPM · แม่นยำ ${result.accuracy}% (เกรด ${result.grade})\n👉 กดลิงก์มาวัดฝีมือในสำนวนเดียวกันเลย:\n${url}`;
+
+    try {
+      await navigator.clipboard.writeText(textToCopy);
+      setChallengeCopied(mode);
+      setTimeout(() => setChallengeCopied('none'), 3000);
+    } catch {
+      // Fallback: keep url visible in input for manual copy
+      setChallengeCopied(mode);
+    }
+  };
+
+  // Judge Duel Outcome if playing from a friend's Challenge Link
+  const duelWon =
+    activeChallenge &&
+    (result.wpm > activeChallenge.targetWpm ||
+      (result.wpm === activeChallenge.targetWpm && result.accuracy >= activeChallenge.targetAcc));
 
   // Build SVG WPM sparkline path
   const sparkline = (() => {
@@ -133,12 +186,45 @@ export function VerdictModal({
               {grade.titleTh}
             </h2>
             <p className="mt-1 text-xs text-[#cbb89d] sm:text-sm">{grade.subtitle}</p>
-            <div className="mt-2 inline-flex items-center gap-2 rounded-full border border-[#d4af37]/35 bg-[#d4af37]/12 px-3 py-1 text-xs font-bold text-[#f2d583]">
-              <Sparkle weight="fill" className="h-3.5 w-3.5" />+{result.xpEarned} XP ชื่อเสียงเสมียนศาล
+
+            <div className="mt-2.5 flex flex-wrap items-center justify-center gap-2 sm:justify-start">
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-[#d4af37]/35 bg-[#d4af37]/12 px-3 py-1 text-xs font-bold text-[#f2d583]">
+                <Sparkle weight="fill" className="h-3.5 w-3.5" />+{result.xpEarned} XP
+              </span>
+
+              {result.isNewPersonalBest && (
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-[#68e0a8]/60 bg-[#2ea673]/25 px-3 py-1 text-xs font-extrabold text-[#9effce]">
+                  <Trophy weight="fill" className="h-3.5 w-3.5 text-[#ffe07d]" />
+                  ทำลายสถิติใหม่!
+                  {result.previousBestWpm ? ` (เดิม ${result.previousBestWpm} WPM)` : ''}
+                </span>
+              )}
+
+              {/* Google Sheets Auto-Sync Status Pill */}
+              {googleSheetUrl ? (
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-white/15 bg-black/40 px-3 py-1 text-[11px] font-semibold text-[#cdebd9]">
+                  <CloudCheck weight="fill" className="h-3.5 w-3.5 text-[#68e0a8]" />
+                  {sheetSyncStatus === 'syncing'
+                    ? 'กำลังบันทึกเข้า Google Sheet...'
+                    : sheetSyncStatus === 'synced'
+                    ? 'บันทึกเข้า Google Sheet แล้ว'
+                    : sheetSyncStatus === 'error'
+                    ? 'ส่งเข้า Sheet ไม่สำเร็จ (เก็บในเครื่องแล้ว)'
+                    : 'เชื่อมต่อ Google Sheet แล้ว'}
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  onClick={onOpenGoogleSheets}
+                  className="inline-flex items-center gap-1 rounded-full border border-[#3d75b5]/45 bg-[#3d75b5]/15 px-3 py-1 text-[11px] font-bold text-[#a8d1ff] hover:bg-[#3d75b5]/25 cursor-pointer"
+                >
+                  <Table weight="duotone" className="h-3.5 w-3.5" />
+                  เชื่อม Google Sheet เก็บสถิติออนไลน์
+                </button>
+              )}
             </div>
           </div>
 
-          {/* Animated Wax Seal Stamp with Grade */}
           <div className="animate-wax-stamp relative flex h-28 w-28 shrink-0 items-center justify-center">
             <img
               src={sealImg}
@@ -155,6 +241,37 @@ export function VerdictModal({
           </div>
         </div>
 
+        {/* Friend Duel Outcome Banner */}
+        {activeChallenge && (
+          <div
+            className={`mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border p-4 ${
+              duelWon
+                ? 'border-[#68e0a8]/60 bg-gradient-to-r from-[#0e3826] to-[#1a2b1c]'
+                : 'border-[#d94141]/55 bg-gradient-to-r from-[#3f1414] to-[#261410]'
+            }`}
+          >
+            <div className="flex items-center gap-3">
+              <Sword
+                weight="fill"
+                className={`h-7 w-7 shrink-0 ${duelWon ? 'text-[#ffe07d]' : 'text-[#ff8a8a]'}`}
+              />
+              <div>
+                <div className={`text-base font-extrabold ${duelWon ? 'text-[#9effce]' : 'text-[#ffbdbd]'}`}>
+                  {duelWon
+                    ? `ชนะคำท้าดวลของ "${activeChallenge.challengerName}" สำเร็จ!`
+                    : `ยังไม่ผ่านคำท้าของ "${activeChallenge.challengerName}" — ลองแก้มืออีกครั้ง!`}
+                </div>
+                <div className="mt-0.5 text-xs text-[#dfd3c0]">
+                  สถิติผู้ท้า: {activeChallenge.targetWpm} WPM ({activeChallenge.targetAcc}%) · สถิติของคุณ:{' '}
+                  <span className="font-bold text-[#ffe07d]">
+                    {result.wpm} WPM ({result.accuracy}%)
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Core Stats Grid */}
         <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
           <StatTile label="ความเร็ว (WPM)" value={`${result.wpm}`} sub={`${result.cpm} ตัวอักษร/นาที`} highlight />
@@ -169,9 +286,78 @@ export function VerdictModal({
           />
         </div>
 
+        {/* === SEND CHALLENGE LINK BOX (Item #3) === */}
+        <div className="mt-5 rounded-2xl border border-[#d4af37]/45 bg-gradient-to-r from-[#291d10]/95 via-[#1f160e]/95 to-[#291d10]/95 p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2 text-sm font-bold text-[#f5d87e]">
+              <Sword weight="duotone" className="h-5 w-5 text-[#f2d583]" />
+              ส่งคำท้าดวล — ก๊อปลิงก์ให้เพื่อนมาพิมพ์สำนวนเดียวกันนี้!
+            </div>
+            <span className="text-[11px] text-[#bba88e]">
+              เพื่อนกดลิงก์แล้วจะได้ข้อความเดียวกันเป๊ะ + แข่งทำลาย {result.wpm} WPM ของคุณ
+            </span>
+          </div>
+
+          <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center">
+            <input
+              type="text"
+              value={playerName}
+              onChange={(e) => onChangePlayerName(e.target.value)}
+              placeholder="ชื่อผู้ท้าชิง (เช่น เสมียนสายฟ้า)"
+              maxLength={32}
+              className="w-full rounded-xl border border-[#d4af37]/35 bg-black/50 px-3 py-2 text-xs font-semibold text-white placeholder-[#8c7a64] focus:border-[#f2d583] focus:outline-none sm:w-48"
+            />
+            <button
+              type="button"
+              onClick={() => handleCopyChallenge('url')}
+              className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl bg-gradient-to-b from-[#e4c25e] to-[#b88f28] px-4 py-2 text-xs font-extrabold text-[#140e07] transition hover:brightness-110 cursor-pointer"
+            >
+              {challengeCopied === 'url' ? (
+                <>
+                  <Check weight="bold" className="h-4 w-4" />
+                  คัดลอกลิงก์คำท้าเรียบร้อย! ส่งให้เพื่อนได้เลย
+                </>
+              ) : (
+                <>
+                  <Copy weight="bold" className="h-4 w-4" />
+                  คัดลอกลิงก์คำท้าดวล (URL)
+                </>
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={() => handleCopyChallenge('invite')}
+              className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-[#d4af37]/45 bg-[#d4af37]/15 px-3.5 py-2 text-xs font-bold text-[#f2d583] transition hover:bg-[#d4af37]/25 cursor-pointer"
+            >
+              {challengeCopied === 'invite' ? (
+                <>
+                  <Check weight="bold" className="h-4 w-4" />
+                  ก๊อปข้อความแล้ว!
+                </>
+              ) : (
+                <>
+                  <ShareNetwork weight="bold" className="h-4 w-4" />
+                  ก๊อปข้อความชวนเพื่อน
+                </>
+              )}
+            </button>
+          </div>
+
+          {generatedUrl && (
+            <div className="mt-2.5 flex items-center gap-2">
+              <input
+                type="text"
+                readOnly
+                value={generatedUrl}
+                onFocus={(e) => e.currentTarget.select()}
+                className="w-full rounded-lg border border-white/10 bg-black/55 px-2.5 py-1.5 font-mono-num text-[11px] text-[#cbb89d]"
+              />
+            </div>
+          )}
+        </div>
+
         {/* WPM Pace Chart & Weak Keys Heatmap */}
         <div className="mt-5 grid gap-4 sm:grid-cols-2">
-          {/* WPM Pace Sparkline */}
           <div className="rounded-xl border border-[#d4af37]/20 bg-black/35 p-4">
             <div className="flex items-center justify-between text-xs font-bold text-[#f2d583]">
               <span>กราฟจังหวะความเร็ว (WPM Pace)</span>
@@ -206,7 +392,6 @@ export function VerdictModal({
             )}
           </div>
 
-          {/* Weakest Keys + Targeted Drill Button */}
           <div className="flex flex-col justify-between rounded-xl border border-[#d4af37]/20 bg-black/35 p-4">
             <div>
               <div className="flex items-center gap-1.5 text-xs font-bold text-[#f2d583]">
@@ -352,7 +537,7 @@ export function VerdictModal({
             className="inline-flex items-center gap-2 rounded-xl border border-white/15 bg-white/5 px-4 py-2.5 text-sm font-semibold text-[#f5efe6] transition hover:bg-white/10 cursor-pointer"
           >
             <ArrowsClockwise weight="bold" className="h-4 w-4" />
-            พิมพ์สำนวนนี้อีกครั้ง
+            พิมพ์ทำลายสถิติอีกครั้ง
           </button>
           <button
             type="button"

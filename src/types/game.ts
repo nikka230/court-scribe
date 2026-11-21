@@ -53,6 +53,28 @@ export interface CaseDossier {
   lines: PassageLine[];
 }
 
+export interface ActiveChallenge {
+  challengerName: string;
+  targetWpm: number;
+  targetAcc: number;
+  targetGrade: 'S' | 'A' | 'B' | 'C';
+  caseTitle: string;
+}
+
+export interface SheetScoreRow {
+  timestamp: string;
+  playerName: string;
+  caseId: string;
+  caseTitle: string;
+  language: Language;
+  wpm: number;
+  cpm: number;
+  accuracy: number;
+  maxCombo: number;
+  grade: 'S' | 'A' | 'B' | 'C';
+  durationSec: number;
+}
+
 export interface KeyStat {
   key: string;
   hits: number;
@@ -85,6 +107,8 @@ export interface SessionResult {
   durationSec: number;
   grade: 'S' | 'A' | 'B' | 'C';
   xpEarned: number;
+  isNewPersonalBest?: boolean;
+  previousBestWpm?: number;
   wpmHistory: WpmSample[];
   weakKeys: Array<{ char: string; misses: number; hits: number; rate: number }>;
   vocabFromSession: VocabHint[];
@@ -103,11 +127,14 @@ export interface SavedVocabItem {
 }
 
 export interface UserProfile {
+  playerName: string;
+  googleSheetUrl: string;
   xp: number;
   totalCharsTyped: number;
   totalSessions: number;
   bestWpmTh: number;
   bestWpmEn: number;
+  caseBestWpm: Record<string, number>;
   streakDays: number;
   lastPlayedDate: string;
   keyStatsTh: Record<string, KeyStat>;
@@ -123,7 +150,9 @@ export interface UserSettings {
   showFingerHands: boolean;
   autoLayoutMapping: boolean; // Allows typing via physical key codes without switching OS IME
   translationMode: TranslationMode;
-  autoReadAloudEn: boolean;
+  autoVoiceEnabled: boolean; // Auto-play character voice on every new sentence (TH & EN)
+  voiceRate: number; // 0.75 - 1.25
+  autoReadAloudEn: boolean; // Legacy alias kept for storage compatibility
   ttsRate: number;
   gameMode: GameMode;
   reducedMotion: boolean;

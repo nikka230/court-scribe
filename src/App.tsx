@@ -12,8 +12,10 @@ import {
   YoutubeLogo,
   GlobeHemisphereWest,
   SpinnerGap,
+  Table,
 } from '@phosphor-icons/react';
 import type {
+  ActiveChallenge,
   CaseDossier,
   CourtShout,
   Language,
@@ -30,14 +32,17 @@ import {
 } from './data/keyboardLayouts';
 import { lookupOfflineWord } from './data/dictionary';
 import { audioEngine } from './engine/audioEngine';
+import { voiceEngine } from './engine/voiceEngine';
 import {
   buildTargetedWeakKeyDrill,
   computeSpeedMetrics,
   computeVerdictGrade,
-  normalizeTypableText,
+  sanitizeTextForLanguage,
 } from './engine/typingEngine';
 import { loadRandomWikipediaCase } from './engine/contentLoaders';
-import { speakText, stopSpeaking } from './engine/translationService';
+import { stopSpeaking } from './engine/translationService';
+import { readChallengeFromUrl } from './engine/challengeService';
+import { isValidSheetUrl, submitScoreToGoogleSheet } from './engine/sheetsService';
 import {
   getRankForXp,
   loadProfile,
@@ -61,13 +66,20 @@ import { SettingsModal } from './components/SettingsPopover';
 import courtroomBg from './assets/courtroom-bg.jpg';
 import sealImg from './assets/court-seal.jpg';
 
+const DEFAULT_THAI_CASE =
+  BUILT_IN_CASES.find((c) => c.id === 'case-th-gala-diamond') ||
+  BUILT_IN_CASES.find((c) => c.language === 'th') ||
+  BUILT_IN_CASES[0];
+
 function normalizeDossier(raw: CaseDossier): CaseDossier {
   return {
     ...raw,
-    lines: raw.lines.map((l) => ({
-      ...l,
-      text: normalizeTypableText(l.text),
-    })),
+    lines: raw.lines
+      .map((l) => ({
+        ...l,
+        text: sanitizeTextForLanguage(l.text, raw.language),
+      }))
+      .filter((l) => l.text.length > 0),
   };
 }
 
@@ -75,10 +87,11 @@ export function App() {
   const [profile, setProfile] = useState<UserProfile>(() => loadProfile());
   const [settings, setSettings] = useState<UserSettings>(() => loadSettings());
 
-  // Default starting dossier: flagship English Courtroom Testimony with Thai translations
+  // Default to Thai courtroom dossier on initial load (Item #4)
   const [dossier, setDossier] = useState<CaseDossier>(() =>
-    normalizeDossier(BUILT_IN_CASES[0])
+    normalizeDossier(DEFAULT_THAI_CASE)
   );
+  const [activeChallenge, setActiveChallenge] = useState<ActiveChallenge | null>(null);
 
   // Typing session live state
   const [currentLineIdx, setCurrentLineIdx] = useState(0);
@@ -100,6 +113,20 @@ export function App() {
   const [shiftHeld, setShiftHeld] = useState(false);
   const [peekActive, setPeekActive] = useState(false);
 
+  // Character voice playback state (Item #1)
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [autoplayBlocked, setAutoplayBlocked] = useState(false);
+  const pendingVoiceUnlockRef = useRef(false);
+
+  // Locked visual-row seam spaces (Item #6)
+  const seamSpacesRef = useRef<Set<number>>(new Set());
+  const justCrossedSeamAtRef = useRef<number>(0);
+
+  // Google Sheets sync feedback (Item #2)
+  const [sheetSyncStatus, setSheetSyncStatus] = useState<'idle' | 'syncing' | 'synced' | 'error'>(
+    'idle'
+  );
+
   // Analytics refs for current session
   const sessionKeyStatsRef = useRef<Record<string, { hits: number; misses: number }>>({});
   const wpmHistoryRef = useRef<WpmSample[]>([]);
@@ -115,6 +142,7 @@ export function App() {
   >('cases');
   const [vocabModalOpen, setVocabModalOpen] = useState(false);
   const [profileModalOpen, setProfileModalOpen] = useState(false);
+  const [profileModalTab, setProfileModalTab] = useState<'career' | 'sheets'>('career');
   const [settingsModalOpen, setSettingsModalOpen] = useState(false);
   const [quickRandomLoading, setQuickRandomLoading] = useState(false);
 
@@ -126,7 +154,17 @@ export function App() {
     () => (currentLine ? Array.from(currentLine.text) : []),
     [currentLine]
   );
-  const nextChar = currentChars[charIndex] ?? '';
+
+  // Compute effective next typable char (skipping any locked-row seam space)
+  const effectiveNextCharIndex = useMemo(() => {
+    let idx = charIndex;
+    while (idx < currentChars.length && seamSpacesRef.current.has(idx)) {
+      idx += 1;
+    }
+    return idx;
+  }, [charIndex, currentChars]);
+
+  const nextChar = currentChars[effectiveNextCharIndex] ?? '';
 
   const totalDossierChars = useMemo(
     () => dossier.lines.reduce((acc, l) => acc + Array.from(l.text).length, 0),
@@ -153,7 +191,6 @@ export function App() {
     []
   );
 
-  // Clear shout after animation finishes
   useEffect(() => {
     if (!shout) return;
     const t = setTimeout(() => setShout(null), 1500);
@@ -168,11 +205,116 @@ export function App() {
     });
   }, []);
 
+  const updateProfile = useCallback((patch: Partial<UserProfile>) => {
+    setProfile((prev) => {
+      const next = { ...prev, ...patch };
+      saveProfile(next);
+      return next;
+    });
+  }, []);
+
+  // Character-matched voice playback helper (Item #1)
+  const playCurrentLineVoice = useCallback(() => {
+    if (!currentLine) return;
+    setAutoplayBlocked(false);
+    pendingVoiceUnlockRef.current = false;
+    voiceEngine.playLine({
+      lineId: currentLine.id,
+      text: currentLine.text,
+      lang: dossier.language,
+      speaker: currentLine.speaker || 'witness',
+      rate: settings.voiceRate || 1.0,
+      volume: Math.max(0.25, settings.volume),
+      onStart: () => {
+        setIsSpeaking(true);
+        setAutoplayBlocked(false);
+      },
+      onEnd: () => setIsSpeaking(false),
+      onAutoplayBlocked: () => {
+        setAutoplayBlocked(true);
+        pendingVoiceUnlockRef.current = true;
+      },
+    });
+  }, [currentLine, dossier.language, settings.voiceRate, settings.volume]);
+
+  const stopCurrentVoice = useCallback(() => {
+    voiceEngine.stop();
+    stopSpeaking();
+    setIsSpeaking(false);
+    pendingVoiceUnlockRef.current = false;
+  }, []);
+
+  // Auto-play character voice on every new sentence (unless YouTube video is providing its own audio)
+  useEffect(() => {
+    if (!settings.autoVoiceEnabled || !currentLine || anyModalOpen || dossier.youtubeId) {
+      return;
+    }
+    const timer = setTimeout(() => {
+      playCurrentLineVoice();
+    }, 180);
+    return () => clearTimeout(timer);
+  }, [
+    settings.autoVoiceEnabled,
+    dossier.id,
+    dossier.youtubeId,
+    currentLineIdx,
+    anyModalOpen,
+    currentLine,
+    playCurrentLineVoice,
+  ]);
+
+  // Decode shared ?challenge=... (and optional ?sheet=...) on initial page load (Item #3)
+  useEffect(() => {
+    let active = true;
+    readChallengeFromUrl().then((decoded) => {
+      if (!active || !decoded) return;
+      setDossier(normalizeDossier(decoded.dossier));
+      setActiveChallenge(decoded.challenge);
+      setCurrentLineIdx(0);
+      setTypedChars([]);
+      if (decoded.sharedSheetUrl) {
+        setProfile((prev) => {
+          if (prev.googleSheetUrl) return prev;
+          const next = { ...prev, googleSheetUrl: decoded.sharedSheetUrl! };
+          saveProfile(next);
+          return next;
+        });
+      }
+      triggerShout(
+        `คำท้าดวลจาก ${decoded.challenge.challengerName}!`,
+        `ทำลายสถิติ ${decoded.challenge.targetWpm} WPM (${decoded.challenge.targetAcc}%) ให้ได้!`,
+        'crimson'
+      );
+    });
+
+    // Also allow standalone ?sheet=https://script.google.com/... sharing
+    const params = new URLSearchParams(window.location.search);
+    const sheetParam = params.get('sheet');
+    if (sheetParam && isValidSheetUrl(sheetParam)) {
+      setProfile((prev) => {
+        const next = { ...prev, googleSheetUrl: sheetParam };
+        saveProfile(next);
+        return next;
+      });
+    }
+
+    return () => {
+      active = false;
+    };
+  }, [triggerShout]);
+
   const resetSession = useCallback(
-    (nextDossier?: CaseDossier, playGavel = true) => {
-      stopSpeaking();
+    (nextDossier?: CaseDossier, playGavel = true, keepChallenge = false) => {
+      stopCurrentVoice();
       if (nextDossier) {
         setDossier(normalizeDossier(nextDossier));
+        if (!keepChallenge) {
+          setActiveChallenge(null);
+          // Clean ?challenge= from URL when switching to a brand new case
+          if (window.location.search.includes('challenge=')) {
+            window.history.replaceState({}, '', window.location.pathname);
+          }
+        }
       }
       setCurrentLineIdx(0);
       setTypedChars([]);
@@ -190,6 +332,7 @@ export function App() {
       setLastHitState('idle');
       setPeekActive(false);
       setVerdictResult(null);
+      setSheetSyncStatus('idle');
       sessionKeyStatsRef.current = {};
       wpmHistoryRef.current = [];
       lastSampleSecRef.current = 0;
@@ -204,27 +347,8 @@ export function App() {
         );
       }
     },
-    [dossier, settings.soundProfile, settings.volume, triggerShout]
+    [dossier, settings.soundProfile, settings.volume, triggerShout, stopCurrentVoice]
   );
-
-  // Auto-read aloud English line when line advances (if user enabled it)
-  useEffect(() => {
-    if (
-      settings.autoReadAloudEn &&
-      dossier.language === 'en' &&
-      currentLine &&
-      !anyModalOpen
-    ) {
-      speakText(currentLine.text, 'en', settings.ttsRate);
-    }
-  }, [
-    settings.autoReadAloudEn,
-    settings.ttsRate,
-    dossier.id,
-    dossier.language,
-    currentLineIdx,
-    anyModalOpen,
-  ]);
 
   // Live WPM clock timer
   useEffect(() => {
@@ -250,9 +374,9 @@ export function App() {
     [correctChars, totalAttempts, elapsedSec]
   );
 
-  // Complete dossier -> compute Verdict & save to localStorage profile
   const finalizeSession = useCallback(
     (finalCorrect: number, finalAttempts: number, finalErrors: number, finalMaxCombo: number) => {
+      stopCurrentVoice();
       const dur = startedAt ? Math.max(1, (Date.now() - startedAt) / 1000) : 1;
       const finalMetrics = computeSpeedMetrics(finalCorrect, finalAttempts, dur);
       const grade = computeVerdictGrade(finalMetrics.wpm, finalMetrics.accuracy, dossier.language);
@@ -271,7 +395,6 @@ export function App() {
         .sort((a, b) => b.misses - a.misses || b.rate - a.rate)
         .slice(0, 8);
 
-      // Collect interesting English vocabulary from the passage for the mini-quiz
       const vocabMap = new Map<string, VocabHint>();
       if (dossier.language === 'en') {
         for (const line of dossier.lines) {
@@ -291,7 +414,7 @@ export function App() {
         { sec: Math.round(dur), wpm: finalMetrics.wpm, accuracy: finalMetrics.accuracy },
       ];
 
-      const result: SessionResult = {
+      const baseResult: SessionResult = {
         id: `sess-${Date.now()}`,
         timestamp: Date.now(),
         caseId: dossier.id,
@@ -315,19 +438,47 @@ export function App() {
         vocabFromSession: Array.from(vocabMap.values()).slice(0, 8),
       };
 
+      const { updated, isNewPersonalBest, previousBestWpm } = recordSessionToProfile(
+        profile,
+        baseResult,
+        sessionKeyStatsRef.current
+      );
+      setProfile(updated);
+
+      const finalResult: SessionResult = {
+        ...baseResult,
+        isNewPersonalBest,
+        previousBestWpm,
+      };
+
       audioEngine.playWaxStamp(settings.soundProfile, settings.volume);
-      canvasRef.current?.burst('#F2D583', 38);
+      canvasRef.current?.burst('#F2D583', 42);
       triggerShout(
-        dossier.language === 'th' ? 'ปิดสำนวนคดีสมบูรณ์!' : 'VERDICT CERTIFIED!',
+        isNewPersonalBest
+          ? 'NEW PERSONAL RECORD!'
+          : dossier.language === 'th'
+          ? 'ปิดสำนวนคดีสมบูรณ์!'
+          : 'VERDICT CERTIFIED!',
         `ระดับ ${grade} · ${finalMetrics.wpm} WPM · แม่นยำ ${finalMetrics.accuracy}%`,
         'emerald'
       );
 
-      setProfile((prev) => recordSessionToProfile(prev, result, sessionKeyStatsRef.current));
-      setVerdictResult(result);
+      setVerdictResult(finalResult);
+
+      // Auto-sync to Google Sheets if configured (Item #2)
+      if (updated.googleSheetUrl && isValidSheetUrl(updated.googleSheetUrl)) {
+        setSheetSyncStatus('syncing');
+        submitScoreToGoogleSheet(updated.googleSheetUrl, updated.playerName, finalResult).then(
+          (ok) => setSheetSyncStatus(ok ? 'synced' : 'error')
+        );
+      }
     },
-    [dossier, startedAt, settings.soundProfile, settings.volume, triggerShout]
+    [dossier, startedAt, profile, settings.soundProfile, settings.volume, triggerShout, stopCurrentVoice]
   );
+
+  const handleSeamSpacesChange = useCallback((seams: Set<number>) => {
+    seamSpacesRef.current = seams;
+  }, []);
 
   // Main global keyboard listener
   useEffect(() => {
@@ -341,10 +492,21 @@ export function App() {
         return;
       }
 
-      // Allow browser shortcuts (Ctrl+C, Alt+Shift to switch keyboard layout, etc.)
+      // F2 replays / toggles the character voice anytime!
+      if (e.key === 'F2') {
+        e.preventDefault();
+        if (isSpeaking) stopCurrentVoice();
+        else playCurrentLineVoice();
+        return;
+      }
+
       if (e.ctrlKey || e.metaKey || e.altKey) return;
 
-      // Tab toggles translation peek in English mode
+      // Unlock autoplay voice on the user's very first typing interaction if browser blocked initial autoplay
+      if (pendingVoiceUnlockRef.current && settings.autoVoiceEnabled && !dossier.youtubeId) {
+        playCurrentLineVoice();
+      }
+
       if (e.key === 'Tab') {
         e.preventDefault();
         if (dossier.language === 'en' && settings.translationMode === 'peek') {
@@ -355,14 +517,19 @@ export function App() {
 
       if (e.key === 'Escape') {
         e.preventDefault();
-        resetSession(undefined, false);
+        resetSession(undefined, false, Boolean(activeChallenge));
         return;
       }
 
       if (e.key === 'Backspace') {
         e.preventDefault();
         if (typedChars.length > 0) {
-          setTypedChars((prev) => prev.slice(0, -1));
+          // Step back cleanly, jumping back over any auto-bridged row seam space!
+          let cut = typedChars.length - 1;
+          while (cut > 0 && seamSpacesRef.current.has(cut)) {
+            cut -= 1;
+          }
+          setTypedChars((prev) => prev.slice(0, cut));
           setLastPressedCode('Backspace');
           setLastHitState('idle');
           setTimeout(
@@ -378,7 +545,6 @@ export function App() {
         e.preventDefault();
       }
 
-      // Determine typed character (either Auto-Layout physical mapping or native OS e.key)
       let typedChar: string | null = null;
       if (settings.autoLayoutMapping) {
         typedChar = mapPhysicalKeyToChar(e.code, e.shiftKey, dossier.language);
@@ -390,7 +556,23 @@ export function App() {
 
       if (!typedChar || !currentLine) return;
 
-      const expected = currentChars[charIndex];
+      // Gracefully absorb a single reflexive Space tap right after crossing a locked row seam
+      if (typedChar === ' ' && Date.now() - justCrossedSeamAtRef.current < 360) {
+        justCrossedSeamAtRef.current = 0;
+        return;
+      }
+
+      // Skip any seam spaces ahead of current cursor before evaluating keystroke
+      const baseTyped = [...typedChars];
+      while (
+        baseTyped.length < currentChars.length &&
+        seamSpacesRef.current.has(baseTyped.length)
+      ) {
+        baseTyped.push(currentChars[baseTyped.length]);
+      }
+
+      const targetIdx = baseTyped.length;
+      const expected = currentChars[targetIdx];
       if (!expected) return;
 
       if (!startedAt) {
@@ -400,11 +582,24 @@ export function App() {
       setLastPressedCode(e.code);
       setTimeout(() => setLastPressedCode((prev) => (prev === e.code ? null : prev)), 150);
 
-      // Update keystroke stats & overwrite-on-typo progression
       const stat = sessionKeyStatsRef.current[expected] || { hits: 0, misses: 0 };
       const isCorrect = typedChar === expected;
 
-      const nextTyped = [...typedChars, typedChar];
+      const nextTyped = [...baseTyped, typedChar];
+
+      // Auto-bridge any seam space right after this character so neither end of Row N nor start of Row N+1 is a spacebar!
+      let crossedSeam = false;
+      while (
+        nextTyped.length < currentChars.length &&
+        seamSpacesRef.current.has(nextTyped.length)
+      ) {
+        nextTyped.push(currentChars[nextTyped.length]);
+        crossedSeam = true;
+      }
+      if (crossedSeam) {
+        justCrossedSeamAtRef.current = Date.now();
+      }
+
       const nextIdx = nextTyped.length;
       const nextAttempts = totalAttempts + 1;
       const nextCorrect = isCorrect ? correctChars + 1 : correctChars;
@@ -429,7 +624,6 @@ export function App() {
 
         audioEngine.playKeyHit(nextCombo, settings.soundProfile, settings.volume);
 
-        // Milestone celebrations!
         if (nextCombo === 25 || nextCombo === 50 || nextCombo === 100) {
           audioEngine.playComboFanfare(settings.soundProfile, settings.volume);
           canvasRef.current?.burst('#F2D583', 26);
@@ -449,7 +643,6 @@ export function App() {
 
         audioEngine.playKeyError(settings.soundProfile, settings.volume);
 
-        // Detect OS keyboard layout mismatch!
         if (!settings.autoLayoutMapping && isWrongKeyboardLayout(typedChar, expected, dossier.language)) {
           setWrongLayoutWarning(true);
         }
@@ -476,7 +669,6 @@ export function App() {
         }
       }
 
-      // Advance cursor (mistyped character overwrites target slot in red; user can Backspace to fix or keep typing)
       if (nextIdx >= currentChars.length) {
         audioEngine.playLineBell(settings.soundProfile, settings.volume);
         const linePerfect = nextTyped.every((ch, i) => ch === currentChars[i]);
@@ -508,10 +700,10 @@ export function App() {
   }, [
     anyModalOpen,
     dossier,
+    activeChallenge,
     currentLine,
     currentChars,
     typedChars,
-    charIndex,
     currentLineIdx,
     startedAt,
     correctChars,
@@ -520,6 +712,9 @@ export function App() {
     combo,
     maxCombo,
     settings,
+    isSpeaking,
+    playCurrentLineVoice,
+    stopCurrentVoice,
     resetSession,
     finalizeSession,
     triggerShout,
@@ -589,14 +784,13 @@ export function App() {
   const handleQuickRandom = async () => {
     setQuickRandomLoading(true);
     try {
-      // Try live random Wikipedia first, seamlessly falling back to curated offline gems!
       const live = await loadRandomWikipediaCase(dossier.language, 6);
       resetSession(live, true);
     } catch {
       const pool = [...BUILT_IN_CASES, ...OFFLINE_RANDOM_GEMS].filter(
         (c) => c.language === dossier.language && c.id !== dossier.id
       );
-      const pick = pool[Math.floor(Math.random() * pool.length)] || BUILT_IN_CASES[0];
+      const pick = pool[Math.floor(Math.random() * pool.length)] || DEFAULT_THAI_CASE;
       resetSession(pick, true);
     } finally {
       setQuickRandomLoading(false);
@@ -604,6 +798,7 @@ export function App() {
   };
 
   const rank = getRankForXp(profile.xp);
+  const currentCaseBestWpm = profile.caseBestWpm?.[dossier.id] || 0;
 
   return (
     <div
@@ -617,27 +812,18 @@ export function App() {
         className="pointer-events-none fixed inset-0 z-0 bg-cover bg-center bg-no-repeat"
         style={{ backgroundImage: `url(${courtroomBg})` }}
       />
-      {/* Rich Noir Mahogany Vignette + Banker's Lamp Golden Spotlight */}
       <div
         aria-hidden="true"
         className="pointer-events-none fixed inset-0 z-0 bg-gradient-to-b from-[#0e0a07]/80 via-[#120d09]/76 to-[#0c0907]/94"
       />
-      <div
-        aria-hidden="true"
-        className="lamp-spotlight pointer-events-none fixed inset-0 z-0"
-      />
+      <div aria-hidden="true" className="lamp-spotlight pointer-events-none fixed inset-0 z-0" />
 
-      {/* Ambient Dust Motes & Combo Particle Sparks */}
       <AmbientCanvas ref={canvasRef} disabled={settings.reducedMotion} />
-
-      {/* Dramatic Courtroom Callout Overlay */}
       <CourtShoutOverlay shout={shout} />
 
-      {/* Main Content Container */}
       <div className="relative z-10 mx-auto flex min-h-screen max-w-[1220px] flex-col px-3 pb-6 pt-3 sm:px-5 sm:pt-4">
         {/* ================= TOP BRASS NAVIGATION HEADER ================= */}
         <header className="brass-panel-glass flex flex-wrap items-center justify-between gap-2 rounded-2xl px-3.5 py-2 sm:px-4">
-          {/* Brand Crest */}
           <div className="flex items-center gap-2.5">
             <img
               src={sealImg}
@@ -654,12 +840,11 @@ export function App() {
                 </span>
               </div>
               <div className="text-[11px] text-[#bba88e]">
-                {rank.titleTh} · Lv.{rank.level}
+                {profile.playerName || rank.titleTh} · Lv.{rank.level}
               </div>
             </div>
           </div>
 
-          {/* Center: Instant Language Switcher (TH / EN+Translation) */}
           <div className="inline-flex overflow-hidden rounded-xl border border-[#d4af37]/35 bg-black/45 p-0.5 text-xs font-bold">
             <button
               type="button"
@@ -685,7 +870,6 @@ export function App() {
             </button>
           </div>
 
-          {/* Right Action Controls */}
           <div className="flex flex-wrap items-center gap-1.5">
             <button
               type="button"
@@ -742,6 +926,19 @@ export function App() {
 
             <button
               type="button"
+              onClick={() => {
+                setProfileModalTab('sheets');
+                setProfileModalOpen(true);
+              }}
+              title="ตารางสถิติออนไลน์ & เชื่อมต่อ Google Sheets"
+              className="inline-flex items-center gap-1 rounded-xl border border-[#2ea673]/40 bg-[#2ea673]/14 px-2.5 py-2 text-xs font-bold text-[#88ebb9] transition hover:bg-[#2ea673]/25 cursor-pointer"
+            >
+              <Table weight="duotone" className="h-4 w-4" />
+              <span className="hidden xl:inline">สถิติ Sheet</span>
+            </button>
+
+            <button
+              type="button"
               onClick={() => setVocabModalOpen(true)}
               title="สมุดคำศัพท์ภาษาอังกฤษ"
               className="relative inline-flex items-center gap-1 rounded-xl border border-white/12 bg-white/5 px-2.5 py-2 text-xs font-bold text-[#e5d8c3] transition hover:bg-white/10 cursor-pointer"
@@ -755,7 +952,10 @@ export function App() {
 
             <button
               type="button"
-              onClick={() => setProfileModalOpen(true)}
+              onClick={() => {
+                setProfileModalTab('career');
+                setProfileModalOpen(true);
+              }}
               aria-label="สถิติและยศเสมียนศาล"
               title="สถิติและยศเสมียนศาล"
               className="rounded-xl border border-white/12 bg-white/5 p-2 text-[#f2d583] transition hover:bg-white/10 cursor-pointer"
@@ -771,8 +971,8 @@ export function App() {
                     settings.soundProfile === 'silent' ? 'brass-typewriter' : 'silent',
                 })
               }
-              aria-label="เปิด/ปิดเสียง"
-              title="เปิด/ปิดเสียง"
+              aria-label="เปิด/ปิดเสียงพิมพ์"
+              title="เปิด/ปิดเสียงพิมพ์ดีด"
               className="rounded-xl border border-white/12 bg-white/5 p-2 text-[#e5d8c3] transition hover:bg-white/10 cursor-pointer"
             >
               {settings.soundProfile === 'silent' ? (
@@ -796,7 +996,6 @@ export function App() {
 
         {/* ================= MAIN COURTROOM GAMEPLAY AREA ================= */}
         <main className="mt-3.5 flex flex-1 flex-col gap-3.5">
-          {/* 1. Courtroom Stage: Character Portrait, Case Progress, Telemetry & Live YouTube Monitor */}
           <CourtroomStage
             dossier={dossier}
             currentLine={currentLine}
@@ -808,9 +1007,22 @@ export function App() {
             gameMode={settings.gameMode}
             lastHitState={lastHitState}
             progressPct={progressPct}
+            isSpeaking={isSpeaking}
+            autoplayBlocked={autoplayBlocked}
+            autoVoiceEnabled={settings.autoVoiceEnabled}
+            voiceRate={settings.voiceRate}
+            onPlayVoice={playCurrentLineVoice}
+            onStopVoice={stopCurrentVoice}
+            onToggleAutoVoice={() => {
+              const next = !settings.autoVoiceEnabled;
+              updateSettings({ autoVoiceEnabled: next });
+              if (!next) stopCurrentVoice();
+            }}
+            onChangeVoiceRate={(r) => updateSettings({ voiceRate: r, ttsRate: r })}
+            activeChallenge={activeChallenge}
+            personalBestWpm={currentCaseBestWpm}
           />
 
-          {/* 2. Centerpiece Parchment Legal Transcript + English Reading/Translation Dock */}
           <TranscriptPaper
             dossier={dossier}
             currentLineIdx={currentLineIdx}
@@ -825,7 +1037,7 @@ export function App() {
             }}
             translationMode={settings.translationMode}
             onChangeTranslationMode={(m) => updateSettings({ translationMode: m })}
-            ttsRate={settings.ttsRate}
+            ttsRate={settings.voiceRate}
             fontSize={settings.fontSize}
             isSavedWord={isSavedWord}
             onSaveVocab={handleSaveVocab}
@@ -837,14 +1049,15 @@ export function App() {
             peekActive={peekActive}
             onPeekToggle={setPeekActive}
             onUpdateLineTranslation={handleUpdateLineTranslation}
+            onSeamSpacesChange={handleSeamSpacesChange}
+            onPlayVoice={playCurrentLineVoice}
           />
 
-          {/* Quick Utility Strip between Paper and Keyboard */}
           <div className="flex flex-wrap items-center justify-between gap-2 px-1 text-xs text-[#cbb89d]">
             <div className="flex flex-wrap items-center gap-2">
               <span className="inline-flex items-center gap-1.5 rounded-full border border-[#d4af37]/30 bg-black/45 px-3 py-1">
                 <span className="h-2 w-2 rounded-full bg-[#2ea673] shadow-[0_0_8px_#2ea673]" />
-                <span>พร้อมพิมพ์ทันที · กด Backspace ลบแก้คำผิดได้</span>
+                <span>พร้อมพิมพ์ทันที · Backspace แก้คำผิด · F2 ฟังเสียงซ้ำ</span>
               </span>
 
               <button
@@ -876,7 +1089,7 @@ export function App() {
               </button>
               <button
                 type="button"
-                onClick={() => resetSession(undefined, false)}
+                onClick={() => resetSession(undefined, false, Boolean(activeChallenge))}
                 className="inline-flex items-center gap-1 rounded-lg border border-white/15 bg-black/40 px-2.5 py-1 text-[11px] font-semibold text-[#d7c6ae] hover:bg-white/10 cursor-pointer"
               >
                 <ArrowsClockwise className="h-3.5 w-3.5" />
@@ -885,7 +1098,6 @@ export function App() {
             </div>
           </div>
 
-          {/* 3. Sculpted 3D Touch-Typing Virtual Keyboard + 10-Finger Hand Guide */}
           {settings.showKeyboard && (
             <VirtualKeyboard
               language={dossier.language}
@@ -904,12 +1116,23 @@ export function App() {
         open={sourceModalOpen}
         onClose={() => setSourceModalOpen(false)}
         initialTab={sourceModalTab}
-        onSelectDossier={(d) => resetSession(d, true)}
+        onSelectDossier={(d) => resetSession(d, true, false)}
       />
 
       <VerdictModal
         result={verdictResult}
-        onReplay={() => resetSession(undefined, true)}
+        dossier={dossier}
+        playerName={profile.playerName}
+        onChangePlayerName={(name) => updateProfile({ playerName: name })}
+        googleSheetUrl={profile.googleSheetUrl}
+        sheetSyncStatus={sheetSyncStatus}
+        activeChallenge={activeChallenge}
+        onOpenGoogleSheets={() => {
+          setVerdictResult(null);
+          setProfileModalTab('sheets');
+          setProfileModalOpen(true);
+        }}
+        onReplay={() => resetSession(undefined, true, Boolean(activeChallenge))}
         onOpenSources={() => {
           setVerdictResult(null);
           setSourceModalTab('cases');
@@ -917,7 +1140,7 @@ export function App() {
         }}
         onStartTargetedDrill={(weakChars) => {
           const drill = buildTargetedWeakKeyDrill(weakChars, dossier.language);
-          resetSession(drill, true);
+          resetSession(drill, true, false);
         }}
         onRandomNext={() => {
           setVerdictResult(null);
@@ -937,8 +1160,10 @@ export function App() {
 
       <ProfileStatsModal
         open={profileModalOpen}
+        initialTab={profileModalTab}
         onClose={() => setProfileModalOpen(false)}
         profile={profile}
+        onUpdateProfile={updateProfile}
         onImportProfile={(next) => {
           saveProfile(next);
           setProfile(next);
