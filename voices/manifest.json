@@ -1,0 +1,242 @@
+{
+  "mv-1": {
+    "lang": "en",
+    "speaker": "judge",
+    "size": 43488
+  },
+  "mv-2": {
+    "lang": "en",
+    "speaker": "prosecutor",
+    "size": 35280
+  },
+  "mv-3": {
+    "lang": "en",
+    "speaker": "witness",
+    "size": 34416
+  },
+  "mv-4": {
+    "lang": "en",
+    "speaker": "defense",
+    "size": 36000
+  },
+  "mv-5": {
+    "lang": "en",
+    "speaker": "judge",
+    "size": 52704
+  },
+  "da-1": {
+    "lang": "en",
+    "speaker": "prosecutor",
+    "size": 35424
+  },
+  "da-2": {
+    "lang": "en",
+    "speaker": "defense",
+    "size": 39888
+  },
+  "da-3": {
+    "lang": "en",
+    "speaker": "witness",
+    "size": 42336
+  },
+  "da-4": {
+    "lang": "en",
+    "speaker": "judge",
+    "size": 47232
+  },
+  "lw-1": {
+    "lang": "en",
+    "speaker": "judge",
+    "size": 41616
+  },
+  "lw-3": {
+    "lang": "en",
+    "speaker": "witness",
+    "size": 43632
+  },
+  "th-gd-1": {
+    "lang": "th",
+    "speaker": "judge",
+    "size": 56304
+  },
+  "th-gd-2": {
+    "lang": "th",
+    "speaker": "prosecutor",
+    "size": 40608
+  },
+  "th-gd-3": {
+    "lang": "th",
+    "speaker": "witness",
+    "size": 38880
+  },
+  "th-gd-4": {
+    "lang": "th",
+    "speaker": "defense",
+    "size": 54864
+  },
+  "th-gd-5": {
+    "lang": "th",
+    "speaker": "judge",
+    "size": 53136
+  },
+  "th-dc-1": {
+    "lang": "th",
+    "speaker": "prosecutor",
+    "size": 43920
+  },
+  "th-dc-2": {
+    "lang": "th",
+    "speaker": "witness",
+    "size": 44928
+  },
+  "th-dc-3": {
+    "lang": "th",
+    "speaker": "defense",
+    "size": 51984
+  },
+  "th-dc-4": {
+    "lang": "th",
+    "speaker": "judge",
+    "size": 59040
+  },
+  "th-pc-1": {
+    "lang": "th",
+    "speaker": "judge",
+    "size": 51552
+  },
+  "th-pc-2": {
+    "lang": "th",
+    "speaker": "defense",
+    "size": 50976
+  },
+  "th-pc-3": {
+    "lang": "th",
+    "speaker": "witness",
+    "size": 46512
+  },
+  "yt1-1": {
+    "lang": "en",
+    "speaker": "witness",
+    "size": 33264
+  },
+  "yt1-2": {
+    "lang": "en",
+    "speaker": "witness",
+    "size": 36432
+  },
+  "yt1-3": {
+    "lang": "en",
+    "speaker": "witness",
+    "size": 39888
+  },
+  "yt1-4": {
+    "lang": "en",
+    "speaker": "witness",
+    "size": 39312
+  },
+  "dth-1": {
+    "lang": "th",
+    "speaker": "judge",
+    "size": 27072
+  },
+  "dth-2": {
+    "lang": "th",
+    "speaker": "judge",
+    "size": 30528
+  },
+  "dth-3": {
+    "lang": "th",
+    "speaker": "judge",
+    "size": 27792
+  },
+  "dth-s1": {
+    "lang": "th",
+    "speaker": "prosecutor",
+    "size": 24048
+  },
+  "dth-s2": {
+    "lang": "th",
+    "speaker": "prosecutor",
+    "size": 30672
+  },
+  "dth-s3": {
+    "lang": "th",
+    "speaker": "prosecutor",
+    "size": 25056
+  },
+  "den-1": {
+    "lang": "en",
+    "speaker": "judge",
+    "size": 34272
+  },
+  "den-2": {
+    "lang": "en",
+    "speaker": "judge",
+    "size": 31680
+  },
+  "den-3": {
+    "lang": "en",
+    "speaker": "judge",
+    "size": 38736
+  },
+  "g1-1": {
+    "lang": "en",
+    "speaker": "witness",
+    "size": 38736
+  },
+  "g1-2": {
+    "lang": "en",
+    "speaker": "witness",
+    "size": 37152
+  },
+  "g1-3": {
+    "lang": "en",
+    "speaker": "witness",
+    "size": 44640
+  },
+  "g2-1": {
+    "lang": "en",
+    "speaker": "witness",
+    "size": 48672
+  },
+  "g2-2": {
+    "lang": "en",
+    "speaker": "witness",
+    "size": 42480
+  },
+  "g3-1": {
+    "lang": "en",
+    "speaker": "defense",
+    "size": 39312
+  },
+  "g3-2": {
+    "lang": "en",
+    "speaker": "defense",
+    "size": 43920
+  },
+  "gth1-1": {
+    "lang": "th",
+    "speaker": "witness",
+    "size": 49536
+  },
+  "gth1-2": {
+    "lang": "th",
+    "speaker": "witness",
+    "size": 57456
+  },
+  "gth1-3": {
+    "lang": "th",
+    "speaker": "witness",
+    "size": 51120
+  },
+  "gth2-1": {
+    "lang": "th",
+    "speaker": "witness",
+    "size": 48384
+  },
+  "gth2-2": {
+    "lang": "th",
+    "speaker": "witness",
+    "size": 47664
+  }
+}
